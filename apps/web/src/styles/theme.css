@@ -1,0 +1,40 @@
+:root {
+  /* Fondos principales estilo DAW */
+  --bg-app: #121214;
+  --bg-panel: #1e1e24;
+  --bg-timeline: #16161a;
+  --bg-card: #282830;
+  --bg-hover: #32323d;
+  
+  --border-color: #2e2e38;
+
+  /* Texto */
+  --text-primary: #f0f0f5;
+  --text-secondary: #9090a0;
+
+  /* Colores de Acento (Tonos Morados) */
+  --accent-purple: #9d4edd;
+  --accent-purple-light: #c77dff;
+  --accent-purple-dark: #7b2cbf;
+  --accent-purple-glow: rgba(157, 78, 221, 0.25);
+
+  /* Pistas */
+  --track-color-1: #c77dff;
+  --track-color-2: #7b2cbf;
+  --track-color-3: #ff6b6b;
+  --track-color-4: #4cc9f0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  user-select: none;
+  overflow: hidden;
+}

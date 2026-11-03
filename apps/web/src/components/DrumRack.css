@@ -1,90 +1,122 @@
 .drum-rack-container {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 320px 1fr;
   gap: 16px;
   height: 100%;
-  box-sizing: border-box;
 }
 
 .pads-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   grid-template-rows: repeat(4, 1fr);
-  gap: 6px;
-  height: 170px;
+  gap: 8px;
+  height: 180px;
 }
 
 .drum-pad {
-  background-color: #333;
+  background-color: var(--bg-card);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: 6px;
   color: var(--text-primary);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 4px 6px;
+  padding: 6px 8px;
   cursor: pointer;
   position: relative;
-  transition: background-color 0.05s ease, border-color 0.1s ease;
+  transition: all 0.08s ease;
 }
 
 .drum-pad:hover {
-  background-color: #3e3e3e;
+  background-color: var(--bg-hover);
+  border-color: #444454;
 }
 
 .drum-pad.selected {
-  border-color: var(--accent-orange);
+  border-color: var(--accent-purple-light);
+  box-shadow: 0 0 0 1px var(--accent-purple-light);
+}
+
+.drum-pad.has-sample {
+  border-left: 4px solid var(--accent-purple);
+  background-color: #22222b;
 }
 
 .drum-pad.active {
-  background-color: var(--accent-orange) !important;
-  color: #000;
+  background-color: var(--accent-purple) !important;
+  color: #fff !important;
+  box-shadow: 0 0 12px var(--accent-purple);
+  transform: scale(0.97);
 }
 
 .pad-number {
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   color: var(--text-secondary);
-  align-self: flex-start;
 }
 
 .pad-label {
   font-size: 0.75rem;
-  font-weight: bold;
+  font-weight: 600;
   text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .key-hint {
   font-size: 0.65rem;
-  color: var(--accent-orange);
+  color: var(--accent-purple-light);
   align-self: flex-end;
+  font-weight: 700;
 }
 
 .pad-inspector {
-  background-color: #222;
+  background-color: var(--bg-card);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
-  padding: 12px;
+  border-radius: 6px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .pad-inspector h4 {
-  margin: 0 0 8px 0;
-  font-size: 0.9rem;
-  color: var(--accent-orange);
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--accent-purple-light);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .inspector-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   font-size: 0.8rem;
+  color: var(--text-secondary);
 }
 
 .sample-name {
-  color: var(--text-secondary);
-  font-style: italic;
+  color: var(--text-primary);
+  font-weight: 600;
+  background-color: var(--bg-app);
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+}
+
+.sample-select {
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  outline: none;
+}
+
+.sample-select:focus {
+  border-color: var(--accent-purple);
 }
 
 .inspector-controls {
@@ -94,28 +126,18 @@
 }
 
 .btn-secondary {
-  background-color: #383838;
+  background-color: var(--bg-app);
   color: var(--text-primary);
   border: 1px solid var(--border-color);
-  padding: 6px 10px;
+  padding: 8px 12px;
   font-size: 0.75rem;
+  font-weight: 600;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
 }
 
 .btn-secondary:hover {
-  background-color: #484848;
-}
-.drum-pad.has-sample {
-  border-left: 3px solid var(--accent-orange);
-  background-color: #383838;
-}
-
-.sample-select {
-  background-color: #181818;
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  padding: 6px;
-  border-radius: 3px;
-  font-size: 0.8rem;
+  background-color: var(--bg-hover);
+  border-color: var(--accent-purple);
 }
