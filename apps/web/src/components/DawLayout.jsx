@@ -1,34 +1,61 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import './DawLayout.css';
 import { DrumRack } from './DrumRack';
 
 export const DawLayout = () => {
   const [audioFiles, setAudioFiles] = useState([]);
   const [folderName, setFolderName] = useState('');
+  const [activeSample, setActiveSample] = useState(null);
 
-  // Función para abrir la carpeta del PC mediante la File System Access API
+  // Contexto de Web Audio para reproducción de baja latencia
+  const audioCtxRef = useRef(null);
+
+  const getAudioContext = () => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume();
+    }
+    return audioCtxRef.current;
+  };
+
+  // Función para abrir la carpeta del PC mediante File System Access API
   const handleSelectFolder = async () => {
     try {
-      // Abre el selector de carpetas del sistema
       const dirHandle = await window.showDirectoryPicker();
       setFolderName(dirHandle.name);
 
       const files = [];
-      // Recorremos los archivos de la carpeta
       for await (const entry of dirHandle.values()) {
-        if (entry.kind === 'file') {
-          // Filtramos solo archivos de audio (.wav, .mp3, .ogg)
-          if (/\.(wav|mp3|ogg)$/i.test(entry.name)) {
-            files.push(entry);
-          }
+        if (entry.kind === 'file' && /\.(wav|mp3|ogg)$/i.test(entry.name)) {
+          files.push(entry);
         }
       }
-
       setAudioFiles(files);
     } catch (err) {
       if (err.name !== 'AbortError') {
-        console.error('Error al seleccionar la carpeta:', err);
+        console.error('Error al seleccionar carpeta:', err);
       }
+    }
+  };
+
+  // Reproducir directamente una muestra desde la lista de la biblioteca
+  const playSample = async (fileHandle) => {
+    try {
+      const ctx = getAudioContext();
+      const file = await fileHandle.getFile();
+      const arrayBuffer = await file.arrayBuffer();
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(ctx.destination);
+      source.start(0);
+
+      setActiveSample(fileHandle);
+    } catch (err) {
+      console.error('Error reproduciendo muestra:', err);
     }
   };
 
@@ -64,8 +91,13 @@ export const DawLayout = () => {
           <ul className="file-list">
             {audioFiles.length > 0 ? (
               audioFiles.map((file, index) => (
-                <li key={index} title={file.name}>
-                  🎵 {file.name}
+                <li 
+                  key={index} 
+                  title="Haz clic para escuchar el sonido"
+                  onClick={() => playSample(file)}
+                  className={activeSample === file ? 'playing' : ''}
+                >
+                  ▶ 🎵 {file.name}
                 </li>
               ))
             ) : (
@@ -95,7 +127,7 @@ export const DawLayout = () => {
           <button>Mezclador</button>
         </div>
         <div className="panel-content">
-          <DrumRack />
+          <DrumRack audioFiles={audioFiles} getAudioContext={getAudioContext} />
         </div>
       </footer>
     </div>

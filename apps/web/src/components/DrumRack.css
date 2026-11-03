@@ -106,3 +106,16 @@
 .btn-secondary:hover {
   background-color: #484848;
 }
+.drum-pad.has-sample {
+  border-left: 3px solid var(--accent-orange);
+  background-color: #383838;
+}
+
+.sample-select {
+  background-color: #181818;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  padding: 6px;
+  border-radius: 3px;
+  font-size: 0.8rem;
+}
