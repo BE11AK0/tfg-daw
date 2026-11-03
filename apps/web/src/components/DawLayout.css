@@ -1,0 +1,141 @@
+.daw-container {
+  display: grid;
+  grid-template-rows: 45px 1fr 220px;
+  height: 100vh;
+  width: 100vw;
+  background-color: var(--bg-app);
+}
+
+.daw-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.transport-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-transport {
+  background-color: #383838;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  padding: 6px 12px;
+  font-weight: bold;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.btn-transport.rec {
+  color: #ff5555;
+}
+
+.bpm-selector input {
+  width: 55px;
+  background: #181818;
+  border: 1px solid var(--border-color);
+  color: var(--accent-orange);
+  text-align: center;
+  font-weight: bold;
+  margin-left: 6px;
+}
+
+.daw-body {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  overflow: hidden;
+}
+
+.daw-sidebar {
+  background-color: var(--bg-panel);
+  border-right: 1px solid var(--border-color);
+  padding: 12px;
+}
+
+.btn-select-folder {
+  width: 100%;
+  padding: 8px;
+  background-color: var(--accent-orange);
+  border: none;
+  color: #fff;
+  font-weight: bold;
+  cursor: pointer;
+  border-radius: 3px;
+  margin-bottom: 12px;
+}
+
+.file-list {
+  list-style: none;
+  padding: 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.file-list li {
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.file-list li:hover {
+  background-color: #383838;
+  color: #fff;
+}
+
+.daw-timeline {
+  background-color: var(--bg-timeline);
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  grid-auto-rows: 60px;
+  overflow-y: auto;
+}
+
+.track-header {
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--border-color);
+  border-left: 4px solid var(--track-color-1);
+  padding: 8px;
+  font-size: 0.85rem;
+  font-weight: bold;
+}
+
+.track-lane {
+  border-bottom: 1px solid var(--border-color);
+  background-image: linear-gradient(to right, #222 1px, transparent 1px);
+  background-size: 40px 100%;
+}
+
+.daw-bottom-panel {
+  background-color: var(--bg-panel);
+  border-top: 2px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-tabs {
+  display: flex;
+  background-color: #222;
+}
+
+.panel-tabs button {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+.panel-tabs button.active {
+  background-color: var(--bg-panel);
+  color: var(--accent-orange);
+  font-weight: bold;
+}
+
+.panel-content {
+  padding: 16px;
+  flex: 1;
+}

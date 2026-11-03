@@ -1,0 +1,108 @@
+.drum-rack-container {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 16px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.pads-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(4, 1fr);
+  gap: 6px;
+  height: 170px;
+}
+
+.drum-pad {
+  background-color: #333;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 4px 6px;
+  cursor: pointer;
+  position: relative;
+  transition: background-color 0.05s ease, border-color 0.1s ease;
+}
+
+.drum-pad:hover {
+  background-color: #3e3e3e;
+}
+
+.drum-pad.selected {
+  border-color: var(--accent-orange);
+}
+
+.drum-pad.active {
+  background-color: var(--accent-orange) !important;
+  color: #000;
+}
+
+.pad-number {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  align-self: flex-start;
+}
+
+.pad-label {
+  font-size: 0.75rem;
+  font-weight: bold;
+  text-align: center;
+}
+
+.key-hint {
+  font-size: 0.65rem;
+  color: var(--accent-orange);
+  align-self: flex-end;
+}
+
+.pad-inspector {
+  background-color: #222;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pad-inspector h4 {
+  margin: 0 0 8px 0;
+  font-size: 0.9rem;
+  color: var(--accent-orange);
+}
+
+.inspector-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+}
+
+.sample-name {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.inspector-controls {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.btn-secondary {
+  background-color: #383838;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.btn-secondary:hover {
+  background-color: #484848;
+}
