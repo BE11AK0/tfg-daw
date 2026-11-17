@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import './DawLayout.css';
 import { DrumRack } from './DrumRack';
 import { PianoRoll } from './PianoRoll';
+import { Mixer } from './Mixer';
 
 const AudioWaveform = ({ audioBuffer, color = '#c084fc', originalWidth, clipWidth, clipOffset = 0, height = 40 }) => {
   const canvasRef = useRef(null);
@@ -59,19 +60,21 @@ export const DawLayout = () => {
   const [activeBottomTab, setActiveBottomTab] = useState('drum-rack'); // 'drum-rack' | 'piano-roll' | 'mixer'
 
   const [tracks, setTracks] = useState([
-    { id: 1, name: 'Pista 1: Drums', color: 'var(--track-color-1)', volume: 0.8, muted: false, solo: false, clips: [] },
-    { id: 2, name: 'Pista 2: Synth MIDI', color: 'var(--track-color-4)', volume: 0.7, muted: false, solo: false, clips: [] }
+    { id: 1, name: 'Pista 1: Drums', color: 'var(--track-color-1)', volume: 0.8, pan: 0, eqLow: 0, eqMid: 0, eqHigh: 0, delayTime: 0, muted: false, solo: false, clips: [] },
+    { id: 2, name: 'Pista 2: Synth MIDI', color: 'var(--track-color-4)', volume: 0.7, pan: 0, eqLow: 0, eqMid: 0, eqHigh: 0, delayTime: 0, muted: false, solo: false, clips: [] }
   ]);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [bpm, setBpm] = useState(120);
   const [playheadPosition, setPlayheadPosition] = useState(0);
+  const [metronomeActive, setMetronomeActive] = useState(false);
 
   const audioCtxRef = useRef(null);
   const timelineRef = useRef(null);
-  const dragRef = useRef(null);
   const animationFrameRef = useRef(null);
   const activeSourcesRef = useRef([]);
+  const metronomeTimerRef = useRef(null);
+  const analysersRef = useRef({});
   
   const previewAudioRef = useRef(null);
   const draggedItemRef = useRef(null);
@@ -82,6 +85,12 @@ export const DawLayout = () => {
 
   const tracksRef = useRef(tracks);
   tracksRef.current = tracks;
+
+  const metronomeActiveRef = useRef(metronomeActive);
+  metronomeActiveRef.current = metronomeActive;
+
+  const bpmRef = useRef(bpm);
+  bpmRef.current = bpm;
 
   useEffect(() => {
     const timelineEl = timelineRef.current;
@@ -120,11 +129,86 @@ export const DawLayout = () => {
     }
   };
 
+  const playClickSound = (ctx) => {
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1000, ctx.currentTime);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.05);
+    } catch (e) {}
+  };
+
+  // Reproductor de sintetizador con cadena de EQ de 3 bandas (Low, Mid, High)
+  const playSynthNote = (ctx, semitone, durationSec, track, analyser) => {
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const delay = ctx.createDelay();
+      const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+
+      // Nodos de ecualización 3 bandas
+      const lowFilter = ctx.createBiquadFilter();
+      lowFilter.type = 'lowshelf';
+      lowFilter.frequency.value = 250;
+      lowFilter.gain.value = track.eqLow || 0;
+
+      const midFilter = ctx.createBiquadFilter();
+      midFilter.type = 'peaking';
+      midFilter.frequency.value = 1500;
+      midFilter.gain.value = track.eqMid || 0;
+
+      const highFilter = ctx.createBiquadFilter();
+      highFilter.type = 'highshelf';
+      highFilter.frequency.value = 4000;
+      highFilter.gain.value = track.eqHigh || 0;
+
+      const freq = 261.63 * Math.pow(2, semitone / 12);
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+
+      delay.delayTime.value = track.delayTime ?? 0;
+
+      gain.gain.setValueAtTime(track.volume * 0.3, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.001, ctx.currentTime + durationSec);
+
+      if (panner) panner.pan.value = track.pan || 0;
+
+      // Cadena: Osc -> Low -> Mid -> High -> Delay -> Gain -> Analyser -> Panner -> Out
+      osc.connect(lowFilter);
+      lowFilter.connect(midFilter);
+      midFilter.connect(highFilter);
+      highFilter.connect(delay);
+      delay.connect(gain);
+      gain.connect(analyser);
+
+      if (panner) {
+        analyser.connect(panner);
+        panner.connect(ctx.destination);
+      } else {
+        analyser.connect(ctx.destination);
+      }
+
+      osc.start();
+      osc.stop(ctx.currentTime + durationSec);
+      activeSourcesRef.current.push(osc);
+    } catch (e) {}
+  };
+
   const stopPlayback = () => {
     setIsPlaying(false);
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
+    }
+    if (metronomeTimerRef.current) {
+      clearInterval(metronomeTimerRef.current);
+      metronomeTimerRef.current = null;
     }
     activeSourcesRef.current.forEach((source) => {
       try { source.stop(); } catch (e) {}
@@ -141,10 +225,24 @@ export const DawLayout = () => {
     const pxPerSec = zoom * (bpm / 60);
     const startTime = ctx.currentTime - (startPx / pxPerSec);
 
+    if (metronomeActiveRef.current) {
+      const intervalMs = (60 / bpmRef.current) * 1000;
+      playClickSound(ctx);
+      metronomeTimerRef.current = setInterval(() => {
+        if (isPlayingRef.current) playClickSound(ctx);
+      }, intervalMs);
+    }
+
     tracksRef.current.forEach((track) => {
       if (track.muted) return;
 
+      if (!analysersRef.current[track.id]) {
+        analysersRef.current[track.id] = ctx.createAnalyser();
+      }
+      const analyser = analysersRef.current[track.id];
+
       track.clips.forEach(async (clip) => {
+        // 1. Clips de Audio (WAV/MP3) con cadena de EQ 3 bandas
         if (clip.audioBuffer) {
           try {
             const clipStartTime = startTime + (clip.start / pxPerSec);
@@ -159,11 +257,44 @@ export const DawLayout = () => {
             source.buffer = clip.audioBuffer;
             source.loop = true;
             
+            const lowFilter = ctx.createBiquadFilter();
+            lowFilter.type = 'lowshelf';
+            lowFilter.frequency.value = 250;
+            lowFilter.gain.value = track.eqLow || 0;
+
+            const midFilter = ctx.createBiquadFilter();
+            midFilter.type = 'peaking';
+            midFilter.frequency.value = 1500;
+            midFilter.gain.value = track.eqMid || 0;
+
+            const highFilter = ctx.createBiquadFilter();
+            highFilter.type = 'highshelf';
+            highFilter.frequency.value = 4000;
+            highFilter.gain.value = track.eqHigh || 0;
+
+            const delayNode = ctx.createDelay();
+            delayNode.delayTime.value = track.delayTime ?? 0;
+
             const gainNode = ctx.createGain();
             gainNode.gain.value = track.volume;
 
-            source.connect(gainNode);
-            gainNode.connect(ctx.destination);
+            const pannerNode = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+            if (pannerNode) pannerNode.pan.value = track.pan || 0;
+
+            // Cadena de audio
+            source.connect(lowFilter);
+            lowFilter.connect(midFilter);
+            midFilter.connect(highFilter);
+            highFilter.connect(delayNode);
+            delayNode.connect(gainNode);
+            gainNode.connect(analyser);
+
+            if (pannerNode) {
+              analyser.connect(pannerNode);
+              pannerNode.connect(ctx.destination);
+            } else {
+              analyser.connect(ctx.destination);
+            }
 
             if (clipStartTime >= now) {
               source.start(clipStartTime, clipOffsetSec, clipDurationSec);
@@ -177,8 +308,26 @@ export const DawLayout = () => {
               activeSourcesRef.current.push(source);
             }
           } catch (err) {
-            console.error('Error al reproducir clip:', err);
+            console.error('Error al reproducir clip de audio:', err);
           }
+        }
+
+        // 2. Clips MIDI del Piano Roll
+        if (clip.notes && clip.notes.length > 0) {
+          clip.notes.forEach((note) => {
+            const noteAbsolutePx = clip.start + note.start;
+            const noteTimeSec = noteAbsolutePx / pxPerSec;
+            const noteDurationSec = note.duration / pxPerSec;
+            const notePlayTime = startTime + noteTimeSec;
+            const now = ctx.currentTime;
+
+            if (notePlayTime >= now) {
+              setTimeout(() => {
+                if (!isPlayingRef.current) return;
+                playSynthNote(ctx, note.semitone, noteDurationSec, track, analyser);
+              }, (notePlayTime - now) * 1000);
+            }
+          });
         }
       });
     });
@@ -193,6 +342,7 @@ export const DawLayout = () => {
 
     if (isPlayingRef.current) {
       stopPlayback();
+      setPlayheadPosition(playStartPositionRef.current);
     } else {
       setIsPlaying(true);
       playStartPositionRef.current = playheadPosition;
@@ -231,7 +381,94 @@ export const DawLayout = () => {
   const handleStop = () => {
     stopPreviewAudio();
     stopPlayback();
-    setPlayheadPosition(playStartPositionRef.current);
+    setPlayheadPosition(0);
+    playStartPositionRef.current = 0;
+  };
+
+  const handleSaveProject = () => {
+    const projectData = {
+      bpm,
+      tracks: tracks.map(t => ({
+        id: t.id,
+        name: t.name,
+        color: t.color,
+        volume: t.volume,
+        pan: t.pan,
+        eqLow: t.eqLow,
+        eqMid: t.eqMid,
+        eqHigh: t.eqHigh,
+        delayTime: t.delayTime,
+        muted: t.muted,
+        solo: t.solo,
+        clips: t.clips.map(c => ({
+          id: c.id,
+          name: c.name,
+          start: c.start,
+          width: c.width,
+          notes: c.notes || []
+        }))
+      }))
+    };
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(projectData, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", "tfg_daw_proyecto.json");
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
+
+  const handleLoadProject = (e) => {
+    const fileReader = new FileReader();
+    if (e.target.files[0]) {
+      fileReader.readAsText(e.target.files[0], "UTF-8");
+      fileReader.onload = (event) => {
+        try {
+          const parsed = JSON.parse(event.target.result);
+          if (parsed.bpm) setBpm(parsed.bpm);
+          if (parsed.tracks) setTracks(parsed.tracks);
+          alert('¡Proyecto cargado con éxito! 📂✨');
+        } catch (err) {
+          alert('Error al leer el archivo JSON del proyecto.');
+        }
+      };
+    }
+  };
+
+  const handleExportWav = async () => {
+    alert('Preparando renderizado offline de audio (Bounce)...');
+    try {
+      let maxDuration = 5;
+      tracks.forEach(t => {
+        t.clips.forEach(c => {
+          const endSec = (c.start + c.width) / (zoom * (bpm / 60));
+          if (endSec > maxDuration) maxDuration = endSec;
+        });
+      });
+
+      const offlineCtx = new OfflineAudioContext(2, 44100 * maxDuration, 44100);
+      const pxPerSec = zoom * (bpm / 60);
+
+      tracks.forEach(track => {
+        if (track.muted) return;
+        track.clips.forEach(clip => {
+          if (clip.audioBuffer) {
+            const source = offlineCtx.createBufferSource();
+            source.buffer = clip.audioBuffer;
+            const gain = offlineCtx.createGain();
+            gain.gain.value = track.volume;
+            source.connect(gain);
+            gain.connect(offlineCtx.destination);
+            source.start(clip.start / pxPerSec);
+          }
+        });
+      });
+
+      await offlineCtx.startRendering();
+      alert('¡Audio renderizado con éxito!');
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   useEffect(() => {
@@ -283,12 +520,11 @@ export const DawLayout = () => {
   }, [selectedClipId, bpm, zoom, tracks, playheadPosition]);
 
   const handleSetPlayhead = (e) => {
-    if (e.target.closest('.timeline-clip')) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left + timelineRef.current.scrollLeft;
     const snappedX = Math.round(clickX / (zoom / 2)) * (zoom / 2);
 
-    if (isPlayingRef.current) handleStop(); 
+    if (isPlayingRef.current) stopPlayback(); 
     setPlayheadPosition(Math.max(0, snappedX));
     playStartPositionRef.current = Math.max(0, snappedX);
   };
@@ -365,7 +601,7 @@ export const DawLayout = () => {
     setTracks((prevTracks) => {
       const nextId = prevTracks.length > 0 ? Math.max(...prevTracks.map((t) => t.id)) + 1 : 1;
       const color = trackColors[(nextId - 1) % trackColors.length];
-      return [...prevTracks, { id: nextId, name: `Pista ${nextId}`, color, volume: 0.75, muted: false, solo: false, clips: [] }];
+      return [...prevTracks, { id: nextId, name: `Pista ${nextId}`, color, volume: 0.75, pan: 0, eqLow: 0, eqMid: 0, eqHigh: 0, delayTime: 0, muted: false, solo: false, clips: [] }];
     });
   };
 
@@ -444,14 +680,31 @@ export const DawLayout = () => {
             {isPlaying ? 'PAUSE' : 'PLAY'}
           </button>
           <button className="btn-transport" onClick={handleStop}>STOP</button>
+          
+          <button 
+            className={`btn-transport ${metronomeActive ? 'active-play' : ''}`} 
+            onClick={() => setMetronomeActive(!metronomeActive)}
+            style={{ fontSize: '11px', background: metronomeActive ? '#9333ea' : '#27272a' }}
+          >
+            🔊 Click {metronomeActive ? 'ON' : 'OFF'}
+          </button>
+
           <div className="bpm-selector">
             <span>BPM</span>
             <input type="number" value={bpm} onChange={(e) => setBpm(Number(e.target.value) || 120)} />
           </div>
         </div>
-        <div className="project-title">
+
+        <div className="project-title" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           <span>Proyecto: TFG_Track_01</span>
+          <button onClick={handleSaveProject} style={{ background: '#27272a', color: '#c084fc', border: '1px solid #7c3aed', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '11px' }}>💾 Guardar JSON</button>
+          <label style={{ background: '#27272a', color: '#c084fc', border: '1px solid #7c3aed', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '11px' }}>
+            📂 Cargar JSON
+            <input type="file" accept=".json" onChange={handleLoadProject} style={{ display: 'none' }} />
+          </label>
+          <button onClick={handleExportWav} style={{ background: '#7c3aed', color: '#fff', border: 'none', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '11px' }}>💽 Exportar WAV</button>
         </div>
+
         <div className="presence-badge">
           <span>🟢 2 usuarios conectados</span>
         </div>
@@ -529,7 +782,11 @@ export const DawLayout = () => {
 
                 <div
                   className={`track-lane ${track.muted ? 'is-muted' : ''}`}
-                  style={{ backgroundSize: `${zoom}px 100%`, width: '3000px' }}
+                  style={{ 
+                    backgroundSize: `${zoom}px 100%`, 
+                    width: '3000px',
+                    backgroundImage: 'linear-gradient(90deg, rgba(255, 255, 255, 0.22) 1px, transparent 1px)' 
+                  }}
                   onClick={handleSetPlayhead} 
                   onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
                   onDrop={(e) => handleDropToTrack(e, track.id)}
@@ -541,7 +798,18 @@ export const DawLayout = () => {
                       key={clip.id}
                       className={`timeline-clip ${selectedClipId === clip.id ? 'selected' : ''}`}
                       style={{ left: `${clip.start}px`, width: `${clip.width}px` }}
-                      onClick={(e) => { e.stopPropagation(); setSelectedClipId(clip.id); }}
+                      onClick={(e) => { 
+                        setSelectedClipId(clip.id); 
+                        const laneEl = e.currentTarget.closest('.track-lane');
+                        if (laneEl && timelineRef.current) {
+                          const rect = laneEl.getBoundingClientRect();
+                          const clickX = e.clientX - rect.left + timelineRef.current.scrollLeft;
+                          const snappedX = Math.round(clickX / (zoom / 2)) * (zoom / 2);
+                          if (isPlayingRef.current) stopPlayback();
+                          setPlayheadPosition(Math.max(0, snappedX));
+                          playStartPositionRef.current = Math.max(0, snappedX);
+                        }
+                      }}
                     >
                       {clip.audioBuffer && (
                         <div style={{ position: 'absolute', top: '18px', bottom: 0, left: 0, right: 0, overflow: 'hidden', pointerEvents: 'none' }}>
@@ -588,7 +856,7 @@ export const DawLayout = () => {
             onClick={() => setActiveBottomTab('mixer')}
             style={{ padding: '6px 14px', background: activeBottomTab === 'mixer' ? 'var(--accent-purple)' : 'transparent', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}
           >
-            Mezclador
+            Mezclador Pro & FX
           </button>
         </div>
         
@@ -627,7 +895,9 @@ export const DawLayout = () => {
               }}
             />
           )}
-          {activeBottomTab === 'mixer' && <div style={{ color: 'var(--text-secondary)', padding: '20px', textAlign: 'center' }}>Mixer virtual en construcción...</div>}
+          {activeBottomTab === 'mixer' && (
+            <Mixer tracks={tracks} onUpdateTrack={updateTrack} analysersRef={analysersRef} />
+          )}
         </div>
       </footer>
     </div>

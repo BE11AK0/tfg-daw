@@ -23,7 +23,7 @@ const KEY_MAP = {
   'KeyU': 10, 'KeyJ': 11, 'KeyK': 12,
 };
 
-const TOTAL_STEPS = 96; // Ampliado a 96 pasos para mayor recorrido
+const TOTAL_STEPS = 96;
 
 export const PianoRoll = ({
   audioFiles = [],
@@ -186,6 +186,20 @@ export const PianoRoll = ({
     }
   };
 
+  const handleQuantize = () => {
+    setNotes((prevNotes) =>
+      prevNotes.map((note) => {
+        const nearestStep = Math.round(note.start / stepWidth);
+        const quantizedStart = nearestStep * stepWidth;
+        return {
+          ...note,
+          start: Math.max(0, quantizedStart),
+        };
+      })
+    );
+    alert('¡Notas cuantizadas al pulso de la rejilla! 🎯');
+  };
+
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.repeat) return;
@@ -229,7 +243,6 @@ export const PianoRoll = ({
     setNotes(notes.filter(n => n.id !== noteId));
   };
 
-  // Clic en la regla del Piano Roll para mover el cabezal
   const handleTimelineClick = (e) => {
     if (typeof onUpdatePlayhead !== 'function') return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -253,6 +266,17 @@ export const PianoRoll = ({
           }}
         >
           {isRecording ? '● REC (Grabando)' : '● REC'}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleQuantize}
+          style={{
+            backgroundColor: '#27272a', color: '#c084fc', border: '1px solid #7c3aed',
+            borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontWeight: 'bold'
+          }}
+        >
+          ⚡ Cuantizar
         </button>
 
         <button
@@ -308,7 +332,6 @@ export const PianoRoll = ({
           })}
         </div>
         <div className="piano-grid-area" style={{ position: 'relative', width: `${TOTAL_STEPS * stepWidth}px` }}>
-          {/* Cabezal interactivo */}
           <div 
             onClick={handleTimelineClick}
             style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '16px', background: '#18181b', borderBottom: '1px solid #3f3f46', cursor: 'pointer', zIndex: 5 }}
