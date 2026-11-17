@@ -1,9 +1,16 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { DawLayout } from './components/DawLayout';
-import './styles/theme.css';
+import { IntroSplash } from './components/IntroSplash';
 
-function App() {
-  return <DawLayout />;
+export function App() {
+  const [showIntro, setShowIntro] = useState(true);
+
+  return (
+    <>
+      {showIntro && <IntroSplash onFinish={() => setShowIntro(false)} />}
+      <DawLayout />
+    </>
+  );
 }
 
 export default App;

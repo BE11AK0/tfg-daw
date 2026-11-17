@@ -1,0 +1,135 @@
+.piano-roll-wrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--bg-panel);
+}
+
+.piano-toolbar {
+  height: 36px;
+  background: #18181b;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.piano-tool-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-weight: bold;
+}
+
+.piano-sample-select {
+  background: var(--bg-main);
+  color: #fff;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  outline: none;
+  cursor: pointer;
+  max-width: 250px;
+}
+
+.piano-hint {
+  font-size: 0.7rem;
+  color: var(--accent-purple-light);
+  margin-left: auto;
+}
+
+.piano-roll-container {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.piano-keys {
+  width: 70px;
+  min-width: 70px;
+  height: 100%;
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  background: #18181b;
+  z-index: 5;
+  position: sticky;
+  left: 0;
+}
+
+.piano-key {
+  height: 30px;
+  min-height: 30px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  background: #27272a;
+  color: #d4d4d8;
+  font-weight: bold;
+  box-sizing: border-box;
+}
+
+.piano-key.sharp {
+  background: #09090b;
+  color: #a1a1aa;
+}
+
+.piano-grid-area {
+  flex: 1;
+  height: 100%;
+  position: relative;
+  overflow: auto;
+  background: #121216;
+  display: flex;
+  flex-direction: column;
+}
+
+.piano-row {
+  height: 30px;
+  min-height: 30px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  display: flex;
+  box-sizing: border-box;
+}
+
+.piano-cell {
+  width: 40px;
+  min-width: 40px;
+  height: 100%;
+  border-right: 1px solid rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.piano-cell:hover {
+  background: rgba(147, 51, 234, 0.15);
+}
+
+.midi-note {
+  position: absolute;
+  height: 26px;
+  background: var(--accent-purple);
+  border: 1px solid var(--accent-purple-light);
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding-left: 6px;
+  box-sizing: border-box;
+  z-index: 3;
+}
+
+.midi-note span {
+  font-size: 0.65rem;
+  font-weight: bold;
+  color: #fff;
+  pointer-events: none;
+}

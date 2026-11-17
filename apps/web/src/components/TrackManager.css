@@ -1,0 +1,48 @@
+.track-manager-container {
+  background: #0d0b14;
+  border: 1px solid #231b33;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px;
+}
+
+.track-manager-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.track-manager-header h2 {
+  color: #fff;
+  font-size: 1.2rem;
+  margin: 0;
+}
+
+.track-add-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-add {
+  background: #7e22ce;
+  border: none;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-add:hover {
+  background: #9333ea;
+}
+
+.no-tracks-msg {
+  color: #6b7280;
+  text-align: center;
+  padding: 20px;
+  font-style: italic;
+}
