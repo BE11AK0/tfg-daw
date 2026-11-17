@@ -1,44 +1,60 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './PianoRoll.css';
 
+const PITCHES = [
+  { name: 'C5', semitone: 12 },
+  { name: 'B4', semitone: 11 },
+  { name: 'A#4', semitone: 10 },
+  { name: 'A4', semitone: 9 },
+  { name: 'G#4', semitone: 8 },
+  { name: 'G4', semitone: 7 },
+  { name: 'F#4', semitone: 6 },
+  { name: 'F4', semitone: 5 },
+  { name: 'E4', semitone: 4 },
+  { name: 'D#4', semitone: 3 },
+  { name: 'D4', semitone: 2 },
+  { name: 'C#4', semitone: 1 },
+  { name: 'C4', semitone: 0 }
+];
+
+const KEY_MAP = {
+  'KeyA': 0,
+  'KeyW': 1,
+  'KeyS': 2,
+  'KeyE': 3,
+  'KeyD': 4,
+  'KeyF': 5,
+  'KeyT': 6,
+  'KeyG': 7,
+  'KeyY': 8,
+  'KeyH': 9,
+  'KeyU': 10,
+  'KeyJ': 11,
+  'KeyK': 12,
+};
+
 export const PianoRoll = ({ audioFiles = [], getAudioContext }) => {
   const [notes, setNotes] = useState([]);
   const [loadedBuffer, setLoadedBuffer] = useState(null);
-
-  const pitches = [
-    { name: 'C5', semitone: 12 },
-    { name: 'B4', semitone: 11 },
-    { name: 'A#4', semitone: 10 },
-    { name: 'A4', semitone: 9 },
-    { name: 'G#4', semitone: 8 },
-    { name: 'G4', semitone: 7 },
-    { name: 'F#4', semitone: 6 },
-    { name: 'F4', semitone: 5 },
-    { name: 'E4', semitone: 4 },
-    { name: 'D#4', semitone: 3 },
-    { name: 'D4', semitone: 2 },
-    { name: 'C#4', semitone: 1 },
-    { name: 'C4', semitone: 0 }
-  ];
-
-  // Mapeo de teclas del PC a semitonos desde C4
-  const keyMap = {
-    'KeyA': { semitone: 0 },
-    'KeyW': { semitone: 1 },
-    'KeyS': { semitone: 2 },
-    'KeyE': { semitone: 3 },
-    'KeyD': { semitone: 4 },
-    'KeyF': { semitone: 5 },
-    'KeyT': { semitone: 6 },
-    'KeyG': { semitone: 7 },
-    'KeyY': { semitone: 8 },
-    'KeyH': { semitone: 9 },
-    'KeyU': { semitone: 10 },
-    'KeyJ': { semitone: 11 },
-    'KeyK': { semitone: 12 },
-  };
+  const [activeSemitones, setActiveSemitones] = useState([]);
 
   const activeNodesRef = useRef({});
+  const fallbackCtxRef = useRef(null);
+
+  const resolveAudioContext = () => {
+    let ctx = typeof getAudioContext === 'function' ? getAudioContext() : null;
+    if (!ctx) {
+      if (!fallbackCtxRef.current) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        fallbackCtxRef.current = new AudioCtx();
+      }
+      ctx = fallbackCtxRef.current;
+    }
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume();
+    }
+    return ctx;
+  };
 
   // Cargar sample personalizado
   const handleSelectInstrument = async (e) => {
@@ -49,7 +65,7 @@ export const PianoRoll = ({ audioFiles = [], getAudioContext }) => {
     try {
       const file = await fileItem.getFile();
       const arrayBuffer = await file.arrayBuffer();
-      const ctx = getAudioContext();
+      const ctx = resolveAudioContext();
       const decodedBuffer = await ctx.decodeAudioData(arrayBuffer);
       setLoadedBuffer(decodedBuffer);
     } catch (err) {
@@ -57,10 +73,33 @@ export const PianoRoll = ({ audioFiles = [], getAudioContext }) => {
     }
   };
 
+  // Parar nota (Note-Off con fundido de 50ms)
+  const stopNoteAudio = (semitone) => {
+    setActiveSemitones((prev) => prev.filter((s) => s !== semitone));
+
+    const active = activeNodesRef.current[semitone];
+    if (!active) return;
+
+    const ctx = resolveAudioContext();
+    const { type, source, osc, gainNode } = active;
+
+    try {
+      gainNode.gain.setValueAtTime(gainNode.gain.value, ctx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+
+      if (type === 'buffer' && source) source.stop(ctx.currentTime + 0.05);
+      if (type === 'osc' && osc) osc.stop(ctx.currentTime + 0.05);
+    } catch (e) {}
+
+    delete activeNodesRef.current[semitone];
+  };
+
   // Disparar nota (Note-On)
   const playNoteAudio = (semitone) => {
-    const ctx = getAudioContext();
-    if (ctx.state === 'suspended') ctx.resume();
+    setActiveSemitones((prev) => (prev.includes(semitone) ? prev : [...prev, semitone]));
+
+    const ctx = resolveAudioContext();
+    if (!ctx) return;
 
     if (activeNodesRef.current[semitone]) {
       stopNoteAudio(semitone);
@@ -80,7 +119,6 @@ export const PianoRoll = ({ audioFiles = [], getAudioContext }) => {
       source.start(0);
       activeNodesRef.current[semitone] = { type: 'buffer', source, gainNode };
     } else {
-      // Sintetizador por defecto si no hay sample seleccionado
       const osc = ctx.createOscillator();
       const gainNode = ctx.createGain();
 
@@ -97,42 +135,23 @@ export const PianoRoll = ({ audioFiles = [], getAudioContext }) => {
     }
   };
 
-  // Parar nota (Note-Off con fundido de 50ms)
-  const stopNoteAudio = (semitone) => {
-    const active = activeNodesRef.current[semitone];
-    if (!active) return;
-
-    const ctx = getAudioContext();
-    const { type, source, osc, gainNode } = active;
-
-    try {
-      gainNode.gain.setValueAtTime(gainNode.gain.value, ctx.currentTime);
-      gainNode.gain.linearRampToValueAtTime(0.001, ctx.currentTime + 0.05);
-      
-      if (type === 'buffer' && source) source.stop(ctx.currentTime + 0.05);
-      if (type === 'osc' && osc) osc.stop(ctx.currentTime + 0.05);
-    } catch (e) {}
-
-    delete activeNodesRef.current[semitone];
-  };
-
   // Eventos de teclado del ordenador
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.target.tagName === 'INPUT' || e.repeat) return;
-      const mapped = keyMap[e.code];
-      if (mapped !== undefined) {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.repeat) return;
+      const semitone = KEY_MAP[e.code];
+      if (semitone !== undefined) {
         e.preventDefault();
-        playNoteAudio(mapped.semitone);
+        playNoteAudio(semitone);
       }
     };
 
     const handleKeyUp = (e) => {
-      if (e.target.tagName === 'INPUT') return;
-      const mapped = keyMap[e.code];
-      if (mapped !== undefined) {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+      const semitone = KEY_MAP[e.code];
+      if (semitone !== undefined) {
         e.preventDefault();
-        stopNoteAudio(mapped.semitone);
+        stopNoteAudio(semitone);
       }
     };
 
@@ -175,18 +194,37 @@ export const PianoRoll = ({ audioFiles = [], getAudioContext }) => {
 
       <div className="piano-roll-container">
         <div className="piano-keys">
-          {pitches.map((p, idx) => (
-            <div key={idx} className={`piano-key ${p.name.includes('#') ? 'sharp' : ''}`}>
-              {p.name}
-            </div>
-          ))}
+          {PITCHES.map((p, idx) => {
+            const isSharp = p.name.includes('#');
+            const isActive = activeSemitones.includes(p.semitone);
+            return (
+              <div
+                key={idx}
+                className={`piano-key ${isSharp ? 'sharp' : ''} ${isActive ? 'active' : ''}`}
+                onMouseDown={() => playNoteAudio(p.semitone)}
+                onMouseUp={() => stopNoteAudio(p.semitone)}
+                onMouseLeave={() => stopNoteAudio(p.semitone)}
+                style={
+                  isActive
+                    ? {
+                        backgroundColor: '#8b5cf6',
+                        color: '#ffffff',
+                        boxShadow: 'inset 0 0 10px rgba(139, 92, 246, 0.9)',
+                      }
+                    : undefined
+                }
+              >
+                {p.name}
+              </div>
+            );
+          })}
         </div>
         <div className="piano-grid-area">
-          {pitches.map((p, rowIdx) => (
+          {PITCHES.map((p, rowIdx) => (
             <div key={rowIdx} className="piano-row">
               {Array.from({ length: 48 }).map((_, stepIdx) => (
-                <div 
-                  key={stepIdx} 
+                <div
+                  key={stepIdx}
                   className="piano-cell"
                   onClick={() => handleGridClick(p.name, stepIdx, p.semitone)}
                 />
@@ -194,9 +232,9 @@ export const PianoRoll = ({ audioFiles = [], getAudioContext }) => {
             </div>
           ))}
           {notes.map((note) => {
-            const topIndex = pitches.findIndex(p => p.name === note.pitch);
+            const topIndex = PITCHES.findIndex(p => p.name === note.pitch);
             return (
-              <div 
+              <div
                 key={note.id}
                 className="midi-note"
                 title="Haz clic para eliminar nota"
