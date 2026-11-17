@@ -236,7 +236,7 @@ export const DawLayout = () => {
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.target.tagName === 'INPUT') return;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
 
       if (e.code === 'Space') {
         e.preventDefault();
@@ -598,6 +598,33 @@ export const DawLayout = () => {
             <PianoRoll 
               audioFiles={folderItems.filter((i) => i.kind === 'file').map((f) => f.handle)} 
               getAudioContext={getAudioContext} 
+              isPlaying={isPlaying}
+              bpm={bpm}
+              playheadPosition={playheadPosition}
+              zoom={zoom}
+              onUpdatePlayhead={(newPos) => {
+                setPlayheadPosition(newPos);
+                playStartPositionRef.current = newPos;
+              }}
+              onExportMidiClip={(midiClip) => {
+                setTracks((prevTracks) =>
+                  prevTracks.map((t) => {
+                    if (t.id === 2 || t.name.toLowerCase().includes('synth')) {
+                      const newClip = {
+                        id: Date.now(),
+                        name: midiClip.name,
+                        start: midiClip.start,
+                        width: midiClip.width,
+                        notes: midiClip.notes,
+                        audioBuffer: null,
+                      };
+                      return { ...t, clips: [...t.clips.filter(c => c.name !== midiClip.name), newClip] };
+                    }
+                    return t;
+                  })
+                );
+                alert('¡Clip MIDI enviado a la Pista 2! 🎹');
+              }}
             />
           )}
           {activeBottomTab === 'mixer' && <div style={{ color: 'var(--text-secondary)', padding: '20px', textAlign: 'center' }}>Mixer virtual en construcción...</div>}
