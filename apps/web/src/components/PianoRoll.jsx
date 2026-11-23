@@ -1,387 +1,348 @@
-import React, { useState, useRef, useEffect } from 'react';
-import './PianoRoll.css';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
+import { dawEngine } from '../audio/dawEngine';
 
-const PITCHES = [
-  { name: 'C5', semitone: 12 },
-  { name: 'B4', semitone: 11 },
-  { name: 'A#4', semitone: 10 },
-  { name: 'A4', semitone: 9 },
-  { name: 'G#4', semitone: 8 },
-  { name: 'G4', semitone: 7 },
-  { name: 'F#4', semitone: 6 },
-  { name: 'F4', semitone: 5 },
-  { name: 'E4', semitone: 4 },
-  { name: 'D#4', semitone: 3 },
-  { name: 'D4', semitone: 2 },
-  { name: 'C#4', semitone: 1 },
-  { name: 'C4', semitone: 0 }
-];
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const MIN_SEMITONE = -12; // C3
+const MAX_SEMITONE = 24;  // C6
 
-const KEY_MAP = {
-  'KeyA': 0, 'KeyW': 1, 'KeyS': 2, 'KeyE': 3, 'KeyD': 4,
-  'KeyF': 5, 'KeyT': 6, 'KeyG': 7, 'KeyY': 8, 'KeyH': 9,
-  'KeyU': 10, 'KeyJ': 11, 'KeyK': 12,
-};
+function semitoneToLabel(semitone) {
+  const midi = 60 + semitone;
+  const name = NOTE_NAMES[midi % 12];
+  const octave = Math.floor(midi / 12) - 1;
+  return `${name}${octave}`;
+}
 
-const TOTAL_STEPS = 96;
+function isBlackSemitone(semitone) {
+  const midi = 60 + semitone;
+  return [1, 3, 6, 8, 10].includes(midi % 12);
+}
 
 export const PianoRoll = ({
-  audioFiles = [],
-  getAudioContext,
-  isPlaying = false,
   bpm = 120,
-  playheadPosition = 0,
   zoom = 50,
+  playheadPosition = 0,
   onUpdatePlayhead,
   onExportMidiClip,
+  totalBeats = 16,
+  stepBeats = 0.25,
+  rowHeight = 20
 }) => {
+  const gridRef = useRef(null);
   const [notes, setNotes] = useState([]);
-  const [loadedBuffer, setLoadedBuffer] = useState(null);
-  const [activeSemitones, setActiveSemitones] = useState([]);
-  const [isRecording, setIsRecording] = useState(false);
-  const [internalStep, setInternalStep] = useState(0);
+  const [selectedNoteId, setSelectedNoteId] = useState(null);
+  const [dragState, setDragState] = useState(null);
 
-  const activeNodesRef = useRef({});
-  const recordingNotesRef = useRef({});
-  const fallbackCtxRef = useRef(null);
-  const lastTriggeredStepRef = useRef(-1);
+  const pixelsPerBeat = zoom;
+  const stepPx = Math.max(4, stepBeats * pixelsPerBeat);
 
-  const stepWidth = Math.max(10, zoom / 4);
-  const currentStep = isPlaying 
-    ? Math.floor(playheadPosition / stepWidth) % TOTAL_STEPS 
-    : internalStep;
-
-  const currentStepRef = useRef(currentStep);
-  currentStepRef.current = currentStep;
-
-  const isRecordingRef = useRef(isRecording);
-  isRecordingRef.current = isRecording;
-
-  useEffect(() => {
-    if (isPlaying || !isRecording) return;
-    const stepMs = (60 / bpm / 4) * 1000;
-    const timer = setInterval(() => {
-      setInternalStep((prev) => (prev + 1) % TOTAL_STEPS);
-    }, stepMs);
-    return () => clearInterval(timer);
-  }, [isPlaying, isRecording, bpm]);
-
-  useEffect(() => {
-    if (!isPlaying) {
-      lastTriggeredStepRef.current = -1;
-      return;
+  const semitones = useMemo(() => {
+    const list = [];
+    for (let s = MAX_SEMITONE; s >= MIN_SEMITONE; s--) {
+      list.push(s);
     }
+    return list;
+  }, []);
 
-    if (currentStep !== lastTriggeredStepRef.current) {
-      lastTriggeredStepRef.current = currentStep;
-      notes.forEach((note) => {
-        const noteStartStep = Math.round(note.start / stepWidth);
-        if (noteStartStep === currentStep) {
-          playNoteAudio(note.semitone);
-          const noteDurationSteps = Math.max(1, Math.round(note.duration / stepWidth));
-          const durationMs = (60 / bpm / 4) * 1000 * noteDurationSteps;
-          setTimeout(() => stopNoteAudio(note.semitone), durationMs);
-        }
-      });
-    }
-  }, [currentStep, isPlaying, notes, bpm, stepWidth]);
-
-  const resolveAudioContext = () => {
-    let ctx = typeof getAudioContext === 'function' ? getAudioContext() : null;
-    if (!ctx) {
-      if (!fallbackCtxRef.current) {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        fallbackCtxRef.current = new AudioCtx();
-      }
-      ctx = fallbackCtxRef.current;
-    }
-    if (ctx && ctx.state === 'suspended') ctx.resume();
-    return ctx;
-  };
-
-  const handleSelectInstrument = async (e) => {
-    const fileName = e.target.value;
-    const fileItem = audioFiles.find(f => f.name === fileName);
-    if (!fileItem) return;
-    try {
-      const file = await fileItem.getFile();
-      const arrayBuffer = await file.arrayBuffer();
-      const ctx = resolveAudioContext();
-      const decodedBuffer = await ctx.decodeAudioData(arrayBuffer);
-      setLoadedBuffer(decodedBuffer);
-    } catch (err) {
-      console.error('Error al cargar instrumento:', err);
-    }
-  };
-
-  const stopNoteAudio = (semitone) => {
-    setActiveSemitones((prev) => prev.filter((s) => s !== semitone));
-
-    const recNote = recordingNotesRef.current[semitone];
-    if (recNote) {
-      const endStep = currentStepRef.current;
-      const stepSpan = endStep >= recNote.startStep ? Math.max(1, endStep - recNote.startStep + 1) : 1;
-      const finalDuration = stepSpan * stepWidth;
-      setNotes((prev) => prev.map((n) => (n.id === recNote.id ? { ...n, duration: finalDuration } : n)));
-      delete recordingNotesRef.current[semitone];
-    }
-
-    const active = activeNodesRef.current[semitone];
-    if (!active) return;
-
-    const ctx = resolveAudioContext();
-    const { type, source, osc, gainNode } = active;
-    try {
-      gainNode.gain.setValueAtTime(gainNode.gain.value, ctx.currentTime);
-      gainNode.gain.linearRampToValueAtTime(0.001, ctx.currentTime + 0.05);
-      if (type === 'buffer' && source) source.stop(ctx.currentTime + 0.05);
-      if (type === 'osc' && osc) osc.stop(ctx.currentTime + 0.05);
-    } catch (e) {}
-    delete activeNodesRef.current[semitone];
-  };
-
-  const playNoteAudio = (semitone) => {
-    setActiveSemitones((prev) => (prev.includes(semitone) ? prev : [...prev, semitone]));
-    const ctx = resolveAudioContext();
-    if (!ctx) return;
-
-    if (activeNodesRef.current[semitone]) stopNoteAudio(semitone);
-
-    if (isRecordingRef.current) {
-      const pitchObj = PITCHES.find((p) => p.semitone === semitone);
-      if (pitchObj) {
-        const startStep = currentStepRef.current;
-        const startPx = startStep * stepWidth;
-        const noteId = Date.now() + Math.random();
-        recordingNotesRef.current[semitone] = { id: noteId, startStep };
-
-        setNotes((prev) => [
-          ...prev.filter((n) => !(n.pitch === pitchObj.name && n.start === startPx)),
-          { id: noteId, pitch: pitchObj.name, start: startPx, duration: stepWidth, semitone },
-        ]);
-      }
-    }
-
-    if (loadedBuffer) {
-      const source = ctx.createBufferSource();
-      source.buffer = loadedBuffer;
-      source.playbackRate.value = Math.pow(2, semitone / 12);
-      const gainNode = ctx.createGain();
-      gainNode.gain.setValueAtTime(1.0, ctx.currentTime);
-      source.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      source.start(0);
-      activeNodesRef.current[semitone] = { type: 'buffer', source, gainNode };
-    } else {
-      const osc = ctx.createOscillator();
-      const gainNode = ctx.createGain();
-      const freq = 261.63 * Math.pow(2, semitone / 12);
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(freq, ctx.currentTime);
-      gainNode.gain.setValueAtTime(0.2, ctx.currentTime);
-      osc.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      osc.start(0);
-      activeNodesRef.current[semitone] = { type: 'osc', osc, gainNode };
-    }
-  };
-
-  const handleQuantize = () => {
-    setNotes((prevNotes) =>
-      prevNotes.map((note) => {
-        const nearestStep = Math.round(note.start / stepWidth);
-        const quantizedStart = nearestStep * stepWidth;
-        return {
-          ...note,
-          start: Math.max(0, quantizedStart),
-        };
-      })
-    );
-    alert('¡Notas cuantizadas al pulso de la rejilla! 🎯');
+  const snapPx = (px) => {
+    const maxPx = totalBeats * pixelsPerBeat;
+    const snapped = Math.round(px / stepPx) * stepPx;
+    return Math.max(0, Math.min(maxPx - stepPx, snapped));
   };
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.repeat) return;
-      const semitone = KEY_MAP[e.code];
-      if (semitone !== undefined) {
-        e.preventDefault();
-        playNoteAudio(semitone);
-      }
-    };
-
-    const handleKeyUp = (e) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
-      const semitone = KEY_MAP[e.code];
-      if (semitone !== undefined) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNoteId) {
         e.preventDefault();
-        stopNoteAudio(semitone);
+        setNotes((prev) => prev.filter((n) => n.id !== selectedNoteId));
+        setSelectedNoteId(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedNoteId]);
+
+  useEffect(() => {
+    if (!dragState) return;
+
+    const handleMouseMove = (e) => {
+      const dx = e.clientX - dragState.startX;
+      const dy = e.clientY - dragState.startY;
+      const deltaRows = Math.round(dy / rowHeight);
+      const maxPx = totalBeats * pixelsPerBeat;
+
+      if (dragState.mode === 'move') {
+        const nextStart = snapPx(dragState.initialStart + dx);
+        const nextSemitone = Math.max(
+          MIN_SEMITONE,
+          Math.min(MAX_SEMITONE, dragState.initialSemitone - deltaRows)
+        );
+
+        setNotes((prev) =>
+          prev.map((n) =>
+            n.id === dragState.noteId
+              ? {
+                  ...n,
+                  start: Math.min(nextStart, maxPx - n.duration),
+                  semitone: nextSemitone
+                }
+              : n
+          )
+        );
+      } else if (dragState.mode === 'resize') {
+        const rawDur = dragState.initialDuration + dx;
+        const snappedDur = Math.max(stepPx, Math.round(rawDur / stepPx) * stepPx);
+
+        setNotes((prev) =>
+          prev.map((n) =>
+            n.id === dragState.noteId
+              ? {
+                  ...n,
+                  duration: Math.min(snappedDur, maxPx - n.start)
+                }
+              : n
+          )
+        );
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
+    const handleMouseUp = () => {
+      setDragState(null);
     };
-  }, [loadedBuffer, zoom]);
 
-  const handleGridClick = (pitch, stepIndex, semitone) => {
-    const startPx = stepIndex * stepWidth;
-    const exists = notes.some(n => n.pitch === pitch && n.start === startPx);
-    if (!exists) {
-      const newNote = { id: Date.now() + Math.random(), pitch, start: startPx, duration: stepWidth, semitone };
-      setNotes([...notes, newNote]);
-      playNoteAudio(semitone);
-      setTimeout(() => stopNoteAudio(semitone), 200);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [dragState, pixelsPerBeat, rowHeight, stepPx, totalBeats]);
+
+  const handleGridMouseDown = (e) => {
+    if (e.button !== 0 || !gridRef.current) return;
+    const rect = gridRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const rowIndex = Math.floor(y / rowHeight);
+    const semitone = semitones[rowIndex];
+    if (semitone === undefined) return;
+
+    const startPx = snapPx(x);
+    const existing = notes.find(
+      (n) =>
+        n.semitone === semitone &&
+        startPx >= n.start &&
+        startPx < n.start + n.duration
+    );
+
+    if (existing) {
+      setSelectedNoteId(existing.id);
+      dawEngine.previewSemitone(existing.semitone, 0.25);
+      setDragState({
+        mode: 'move',
+        noteId: existing.id,
+        startX: e.clientX,
+        startY: e.clientY,
+        initialStart: existing.start,
+        initialSemitone: existing.semitone
+      });
+      return;
     }
+
+    const newNote = {
+      id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      semitone,
+      start: startPx,
+      duration: Math.max(stepPx, pixelsPerBeat * 0.5)
+    };
+
+    dawEngine.previewSemitone(newNote.semitone, 0.25);
+    setSelectedNoteId(newNote.id);
+    setNotes((prev) => [...prev, newNote]);
+    setDragState({
+      mode: 'move',
+      noteId: newNote.id,
+      startX: e.clientX,
+      startY: e.clientY,
+      initialStart: newNote.start,
+      initialSemitone: newNote.semitone
+    });
   };
 
-  const handleDeleteNote = (e, noteId) => {
+  const handleNoteContextMenu = (e, noteId) => {
+    e.preventDefault();
     e.stopPropagation();
-    setNotes(notes.filter(n => n.id !== noteId));
+    setNotes((prev) => prev.filter((n) => n.id !== noteId));
+    if (selectedNoteId === noteId) setSelectedNoteId(null);
   };
 
-  const handleTimelineClick = (e) => {
-    if (typeof onUpdatePlayhead !== 'function') return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const newPos = Math.max(0, Math.round(clickX / stepWidth) * stepWidth);
-    onUpdatePlayhead(newPos);
+  const handleSendToTrack = () => {
+    if (!onExportMidiClip || notes.length === 0) return;
+    const maxEnd = notes.reduce((acc, n) => Math.max(acc, n.start + n.duration), pixelsPerBeat * 4);
+    onExportMidiClip({
+      name: 'Patrón Piano Roll',
+      start: 0,
+      width: Math.max(pixelsPerBeat * 2, maxEnd),
+      notes: notes.map(({ semitone, start, duration }) => ({ semitone, start, duration }))
+    });
   };
+
+  const gridWidth = totalBeats * pixelsPerBeat;
+  const gridHeight = semitones.length * rowHeight;
 
   return (
-    <div className="piano-roll-wrapper">
-      <div className="piano-toolbar">
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '4px 10px', borderBottom: '1px solid rgba(168, 85, 247, 0.2)', fontSize: '12px' }}>
         <button
           type="button"
-          onClick={() => { setInternalStep(0); setIsRecording((prev) => !prev); }}
-          style={{
-            backgroundColor: isRecording ? '#9333ea' : '#27272a',
-            color: '#ffffff',
-            border: isRecording ? '1px solid #c084fc' : '1px solid #3f3f46',
-            borderRadius: '6px', padding: '4px 12px', fontWeight: 'bold', cursor: 'pointer',
-            boxShadow: isRecording ? '0 0 12px rgba(168, 85, 247, 0.7)' : 'none',
-          }}
+          onClick={handleSendToTrack}
+          style={{ background: '#7c3aed', color: '#fff', border: 'none', borderRadius: '4px', padding: '3px 10px', cursor: 'pointer', fontWeight: 'bold' }}
         >
-          {isRecording ? '● REC (Grabando)' : '● REC'}
+          Enviar a Pista 2
         </button>
-
-        <button
-          type="button"
-          onClick={handleQuantize}
-          style={{
-            backgroundColor: '#27272a', color: '#c084fc', border: '1px solid #7c3aed',
-            borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontWeight: 'bold'
-          }}
-        >
-          ⚡ Cuantizar
-        </button>
-
         <button
           type="button"
           onClick={() => {
-            if (onExportMidiClip && notes.length > 0) {
-              const maxPx = Math.max(...notes.map(n => n.start + n.duration), stepWidth * 16);
-              onExportMidiClip({ name: 'Synth Melody', notes, width: maxPx, start: 0 });
-            }
+            setNotes([]);
+            setSelectedNoteId(null);
           }}
-          style={{
-            backgroundColor: '#6b21a8', color: '#fff', border: '1px solid #a855f7',
-            borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontWeight: 'bold'
-          }}
+          style={{ background: '#27272a', color: '#e9d5ff', border: '1px solid #7c3aed', borderRadius: '4px', padding: '3px 10px', cursor: 'pointer' }}
         >
-          📤 Enviar a Pista 2
+          Limpiar notas
         </button>
-
-        <button
-          type="button"
-          onClick={() => setNotes([])}
-          style={{ backgroundColor: '#27272a', color: '#d4d4d8', border: '1px solid #3f3f46', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer' }}
-        >
-          Limpiar
-        </button>
-
-        <span className="piano-tool-label">Instrumento:</span>
-        <select className="piano-sample-select" onChange={handleSelectInstrument} defaultValue="">
-          <option value="" disabled>-- Sin sample (Sintetizador) --</option>
-          {audioFiles.map((file, idx) => (
-            <option key={idx} value={file.name}>{file.name}</option>
-          ))}
-        </select>
+        {onUpdatePlayhead && (
+          <button
+            type="button"
+            onClick={() => onUpdatePlayhead(0)}
+            style={{ background: '#27272a', color: '#e9d5ff', border: '1px solid #7c3aed', borderRadius: '4px', padding: '3px 10px', cursor: 'pointer' }}
+          >
+            Cursor a 0 ({bpm} BPM)
+          </button>
+        )}
+        <span style={{ opacity: 0.75 }}>Clic: crear/mover · Borde derecho: alargar · Clic derecho / Supr: borrar</span>
       </div>
 
-      <div className="piano-roll-container">
-        <div className="piano-keys">
-          {PITCHES.map((p, idx) => {
-            const isSharp = p.name.includes('#');
-            const isActive = activeSemitones.includes(p.semitone);
+      <div className="piano-roll-container" style={{ display: 'flex', overflow: 'auto', flex: 1 }}>
+        <div className="piano-keys" style={{ width: '64px', flexShrink: 0 }}>
+          {semitones.map((semitone) => {
+            const black = isBlackSemitone(semitone);
             return (
-              <div
-                key={idx}
-                className={`piano-key ${isSharp ? 'sharp' : ''} ${isActive ? 'active' : ''}`}
-                onMouseDown={() => playNoteAudio(p.semitone)}
-                onMouseUp={() => stopNoteAudio(p.semitone)}
-                onMouseLeave={() => stopNoteAudio(p.semitone)}
-                style={isActive ? { backgroundColor: '#8b5cf6', color: '#ffffff', boxShadow: 'inset 0 0 10px rgba(139, 92, 246, 0.9)' } : undefined}
+              <button
+                key={semitone}
+                type="button"
+                onMouseDown={() => dawEngine.previewSemitone(semitone, 0.25)}
+                style={{
+                  width: '100%',
+                  height: `${rowHeight}px`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  paddingRight: '6px',
+                  fontSize: '11px',
+                  border: '1px solid rgba(168, 85, 247, 0.18)',
+                  background: black ? '#1e162b' : '#f3e8ff',
+                  color: black ? '#e9d5ff' : '#2e1065',
+                  cursor: 'pointer'
+                }}
               >
-                {p.name}
-              </div>
+                {semitoneToLabel(semitone)}
+              </button>
             );
           })}
         </div>
-        <div className="piano-grid-area" style={{ position: 'relative', width: `${TOTAL_STEPS * stepWidth}px` }}>
-          <div 
-            onClick={handleTimelineClick}
-            style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '16px', background: '#18181b', borderBottom: '1px solid #3f3f46', cursor: 'pointer', zIndex: 5 }}
-            title="Haz clic para colocar el cabezal"
-          >
-            {(isPlaying || isRecording) && (
-              <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${currentStep * stepWidth}px`, width: '2px', backgroundColor: '#a855f7', boxShadow: '0 0 8px #a855f7', zIndex: 11 }} />
-            )}
-          </div>
 
-          {PITCHES.map((p, rowIdx) => (
-            <div key={rowIdx} className="piano-row" style={{ display: 'flex' }}>
-              {Array.from({ length: TOTAL_STEPS }).map((_, stepIdx) => (
-                <div
-                  key={stepIdx}
-                  className="piano-cell"
-                  style={{ width: `${stepWidth}px`, minWidth: `${stepWidth}px`, height: '30px' }}
-                  onClick={() => handleGridClick(p.name, stepIdx, p.semitone)}
-                />
-              ))}
-            </div>
-          ))}
+        <div
+          ref={gridRef}
+          className="piano-grid"
+          onMouseDown={handleGridMouseDown}
+          style={{
+            position: 'relative',
+            width: `${gridWidth}px`,
+            height: `${gridHeight}px`,
+            backgroundColor: '#140d1f',
+            backgroundImage: `
+              repeating-linear-gradient(to right, rgba(192, 132, 252, 0.25) 0px, rgba(192, 132, 252, 0.25) 1px, transparent 1px, transparent ${pixelsPerBeat * 4}px),
+              repeating-linear-gradient(to right, rgba(147, 51, 234, 0.12) 0px, rgba(147, 51, 234, 0.12) 1px, transparent 1px, transparent ${pixelsPerBeat}px),
+              repeating-linear-gradient(to bottom, rgba(147, 51, 234, 0.14) 0px, rgba(147, 51, 234, 0.14) 1px, transparent 1px, transparent ${rowHeight}px)
+            `,
+            cursor: 'crosshair'
+          }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              bottom: 0,
+              left: `${playheadPosition}px`,
+              width: '2px',
+              backgroundColor: '#e9d5ff',
+              pointerEvents: 'none',
+              zIndex: 15
+            }}
+          />
 
           {notes.map((note) => {
-            const topIndex = PITCHES.findIndex(p => p.name === note.pitch);
+            const rowIdx = MAX_SEMITONE - note.semitone;
+            const top = rowIdx * rowHeight + 1;
+            const height = rowHeight - 2;
+            const isSelected = note.id === selectedNoteId;
+
             return (
               <div
                 key={note.id}
-                className="midi-note"
-                title="Haz clic para eliminar nota"
-                onClick={(e) => handleDeleteNote(e, note.id)}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  setSelectedNoteId(note.id);
+                  dawEngine.previewSemitone(note.semitone, 0.25);
+                  setDragState({
+                    mode: 'move',
+                    noteId: note.id,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    initialStart: note.start,
+                    initialSemitone: note.semitone
+                  });
+                }}
+                onContextMenu={(e) => handleNoteContextMenu(e, note.id)}
+                title={`${semitoneToLabel(note.semitone)}`}
                 style={{
-                  top: `${topIndex * 30 + 18}px`,
-                  left: `${note.start}px`,
-                  width: `${note.duration - 2}px`,
                   position: 'absolute',
-                  height: '26px',
-                  background: '#a855f7',
+                  left: `${note.start}px`,
+                  top: `${top}px`,
+                  width: `${Math.max(8, note.duration - 2)}px`,
+                  height: `${height}px`,
                   borderRadius: '4px',
-                  border: '1px solid #c084fc',
-                  color: '#fff',
-                  fontSize: '10px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  paddingLeft: '4px',
-                  cursor: 'pointer',
-                  zIndex: 8,
+                  background: isSelected ? '#c084fc' : '#9333ea',
+                  border: isSelected ? '1px solid #faf5ff' : '1px solid #d8b4fe',
+                  boxSizing: 'border-box',
+                  cursor: 'grab'
                 }}
               >
-                <span>{note.pitch}</span>
+                <div
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    setSelectedNoteId(note.id);
+                    setDragState({
+                      mode: 'resize',
+                      noteId: note.id,
+                      startX: e.clientX,
+                      startY: e.clientY,
+                      initialDuration: note.duration
+                    });
+                  }}
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: 0,
+                    width: '7px',
+                    height: '100%',
+                    cursor: 'ew-resize',
+                    background: 'rgba(250, 245, 255, 0.25)',
+                    borderTopRightRadius: '4px',
+                    borderBottomRightRadius: '4px'
+                  }}
+                />
               </div>
             );
           })}

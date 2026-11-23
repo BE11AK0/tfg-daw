@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import './DawLayout.css';
 import { DrumRack } from './DrumRack';
 import { PianoRoll } from './PianoRoll';
 import { Mixer } from './Mixer';
+import { dawEngine } from '../audio/dawEngine';
 
 const AudioWaveform = ({ audioBuffer, color = '#c084fc', originalWidth, clipWidth, clipOffset = 0, height = 40 }) => {
   const canvasRef = useRef(null);
@@ -57,7 +58,8 @@ export const DawLayout = () => {
   const [zoom, setZoom] = useState(50);
   const [trackHeight, setTrackHeight] = useState(64);
   const [selectedClipId, setSelectedClipId] = useState(null);
-  const [activeBottomTab, setActiveBottomTab] = useState('drum-rack'); // 'drum-rack' | 'piano-roll' | 'mixer'
+  const [activeBottomTab, setActiveBottomTab] = useState('drum-rack');
+  const [draggingClip, setDraggingClip] = useState(null);
 
   const [tracks, setTracks] = useState([
     { id: 1, name: 'Pista 1: Drums', color: 'var(--track-color-1)', volume: 0.8, pan: 0, eqLow: 0, eqMid: 0, eqHigh: 0, delayTime: 0, muted: false, solo: false, clips: [] },
@@ -74,7 +76,7 @@ export const DawLayout = () => {
   const animationFrameRef = useRef(null);
   const activeSourcesRef = useRef([]);
   const metronomeTimerRef = useRef(null);
-  const analysersRef = useRef({});
+  const analysersRef = useRef(dawEngine.getAnalysersRef());
 
   const previewAudioRef = useRef(null);
   const draggedItemRef = useRef(null);
@@ -91,6 +93,31 @@ export const DawLayout = () => {
 
   const bpmRef = useRef(bpm);
   bpmRef.current = bpm;
+
+  const selectedClipEntry = useMemo(() => {
+    for (const track of tracks) {
+      const found = (track.clips || []).find((c) => c.id === selectedClipId);
+      if (found) {
+        return { trackId: track.id, clip: found };
+      }
+    }
+    return null;
+  }, [tracks, selectedClipId]);
+
+  const handleUpdateSelectedClipNotes = (nextNotes) => {
+    if (!selectedClipEntry) return;
+    setTracks((prevTracks) =>
+      prevTracks.map((t) => {
+        if (t.id !== selectedClipEntry.trackId) return t;
+        return {
+          ...t,
+          clips: t.clips.map((c) =>
+            c.id === selectedClipEntry.clip.id ? { ...c, notes: nextNotes } : c
+          )
+        };
+      })
+    );
+  };
 
   useEffect(() => {
     const timelineEl = timelineRef.current;
@@ -112,9 +139,44 @@ export const DawLayout = () => {
     return () => timelineEl.removeEventListener('wheel', handleWheel);
   }, []);
 
+  useEffect(() => {
+    if (!draggingClip) return;
+
+    const handleMouseMove = (e) => {
+      const deltaX = e.clientX - draggingClip.startX;
+      const snapStep = Math.max(1, zoom / 2);
+      const snappedDelta = Math.round(deltaX / snapStep) * snapStep;
+      const nextStart = Math.max(0, draggingClip.initialStart + snappedDelta);
+
+      setTracks((prevTracks) =>
+        prevTracks.map((t) => {
+          if (t.id !== draggingClip.trackId) return t;
+          return {
+            ...t,
+            clips: t.clips.map((c) =>
+              c.id === draggingClip.clipId ? { ...c, start: nextStart } : c
+            )
+          };
+        })
+      );
+    };
+
+    const handleMouseUp = () => {
+      setDraggingClip(null);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [draggingClip, zoom]);
+
   const getAudioContext = () => {
     if (!audioCtxRef.current) {
-      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      audioCtxRef.current = dawEngine.ctx || new (window.AudioContext || window.webkitAudioContext)();
+      dawEngine.ctx = audioCtxRef.current;
     }
     if (audioCtxRef.current.state === 'suspended') {
       audioCtxRef.current.resume();
@@ -130,74 +192,11 @@ export const DawLayout = () => {
   };
 
   const playClickSound = (ctx) => {
-    try {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(1000, ctx.currentTime);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.05);
-    } catch (e) {}
+    dawEngine.playClickSound(ctx);
   };
 
-  // Reproductor de sintetizador con cadena de EQ de 3 bandas (Low, Mid, High)
   const playSynthNote = (ctx, semitone, durationSec, track, analyser) => {
-    try {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      const delay = ctx.createDelay();
-      const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
-
-      // Nodos de ecualización 3 bandas
-      const lowFilter = ctx.createBiquadFilter();
-      lowFilter.type = 'lowshelf';
-      lowFilter.frequency.value = 250;
-      lowFilter.gain.value = track.eqLow || 0;
-
-      const midFilter = ctx.createBiquadFilter();
-      midFilter.type = 'peaking';
-      midFilter.frequency.value = 1500;
-      midFilter.gain.value = track.eqMid || 0;
-
-      const highFilter = ctx.createBiquadFilter();
-      highFilter.type = 'highshelf';
-      highFilter.frequency.value = 4000;
-      highFilter.gain.value = track.eqHigh || 0;
-
-      const freq = 261.63 * Math.pow(2, semitone / 12);
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(freq, ctx.currentTime);
-
-      delay.delayTime.value = track.delayTime ?? 0;
-
-      gain.gain.setValueAtTime(track.volume * 0.3, ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(0.001, ctx.currentTime + durationSec);
-
-      if (panner) panner.pan.value = track.pan || 0;
-
-      // Cadena: Osc -> Low -> Mid -> High -> Delay -> Gain -> Analyser -> Panner -> Out
-      osc.connect(lowFilter);
-      lowFilter.connect(midFilter);
-      midFilter.connect(highFilter);
-      highFilter.connect(delay);
-      delay.connect(gain);
-      gain.connect(analyser);
-
-      if (panner) {
-        analyser.connect(panner);
-        panner.connect(ctx.destination);
-      } else {
-        analyser.connect(ctx.destination);
-      }
-
-      osc.start();
-      osc.stop(ctx.currentTime + durationSec);
-      activeSourcesRef.current.push(osc);
-    } catch (e) {}
+    dawEngine.playSynthNote(ctx, semitone, durationSec, track, analyser);
   };
 
   const stopPlayback = () => {
@@ -210,6 +209,7 @@ export const DawLayout = () => {
       clearInterval(metronomeTimerRef.current);
       metronomeTimerRef.current = null;
     }
+    dawEngine.stopAll();
     activeSourcesRef.current.forEach((source) => {
       try { source.stop(); } catch (e) {}
     });
@@ -233,103 +233,13 @@ export const DawLayout = () => {
       }, intervalMs);
     }
 
-    tracksRef.current.forEach((track) => {
-      if (track.muted) return;
-
-      if (!analysersRef.current[track.id]) {
-        analysersRef.current[track.id] = ctx.createAnalyser();
-      }
-      const analyser = analysersRef.current[track.id];
-
-      track.clips.forEach(async (clip) => {
-        // 1. Clips de Audio (WAV/MP3) con cadena de EQ 3 bandas
-        if (clip.audioBuffer) {
-          try {
-            const clipStartTime = startTime + (clip.start / pxPerSec);
-            const clipDurationSec = clip.width / pxPerSec;
-            const clipOffsetSec = (clip.clipOffset || 0) / pxPerSec;
-            const now = ctx.currentTime;
-            const endTime = clipStartTime + clipDurationSec;
-
-            if (now >= endTime) return;
-
-            const source = ctx.createBufferSource();
-            source.buffer = clip.audioBuffer;
-            source.loop = true;
-
-            const lowFilter = ctx.createBiquadFilter();
-            lowFilter.type = 'lowshelf';
-            lowFilter.frequency.value = 250;
-            lowFilter.gain.value = track.eqLow || 0;
-
-            const midFilter = ctx.createBiquadFilter();
-            midFilter.type = 'peaking';
-            midFilter.frequency.value = 1500;
-            midFilter.gain.value = track.eqMid || 0;
-
-            const highFilter = ctx.createBiquadFilter();
-            highFilter.type = 'highshelf';
-            highFilter.frequency.value = 4000;
-            highFilter.gain.value = track.eqHigh || 0;
-
-            const delayNode = ctx.createDelay();
-            delayNode.delayTime.value = track.delayTime ?? 0;
-
-            const gainNode = ctx.createGain();
-            gainNode.gain.value = track.volume;
-
-            const pannerNode = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
-            if (pannerNode) pannerNode.pan.value = track.pan || 0;
-
-            // Cadena de audio
-            source.connect(lowFilter);
-            lowFilter.connect(midFilter);
-            midFilter.connect(highFilter);
-            highFilter.connect(delayNode);
-            delayNode.connect(gainNode);
-            gainNode.connect(analyser);
-
-            if (pannerNode) {
-              analyser.connect(pannerNode);
-              pannerNode.connect(ctx.destination);
-            } else {
-              analyser.connect(ctx.destination);
-            }
-
-            if (clipStartTime >= now) {
-              source.start(clipStartTime, clipOffsetSec, clipDurationSec);
-              activeSourcesRef.current.push(source);
-            } else {
-              const playheadOffset = now - clipStartTime;
-              const bufferStartOffset = (clipOffsetSec + playheadOffset) % clip.audioBuffer.duration;
-              const playDuration = clipDurationSec - playheadOffset;
-
-              source.start(now, bufferStartOffset, playDuration);
-              activeSourcesRef.current.push(source);
-            }
-          } catch (err) {
-            console.error('Error al reproducir clip de audio:', err);
-          }
-        }
-
-        // 2. Clips MIDI del Piano Roll
-        if (clip.notes && clip.notes.length > 0) {
-          clip.notes.forEach((note) => {
-            const noteAbsolutePx = clip.start + note.start;
-            const noteTimeSec = noteAbsolutePx / pxPerSec;
-            const noteDurationSec = note.duration / pxPerSec;
-            const notePlayTime = startTime + noteTimeSec;
-            const now = ctx.currentTime;
-
-            if (notePlayTime >= now) {
-              setTimeout(() => {
-                if (!isPlayingRef.current) return;
-                playSynthNote(ctx, note.semitone, noteDurationSec, track, analyser);
-              }, (notePlayTime - now) * 1000);
-            }
-          });
-        }
-      });
+    dawEngine.schedulePlayback({
+      ctx,
+      tracks: tracksRef.current,
+      startPx,
+      zoom,
+      bpm,
+      isPlayingRef
     });
 
     return startTime;
@@ -383,6 +293,34 @@ export const DawLayout = () => {
     stopPlayback();
     setPlayheadPosition(0);
     playStartPositionRef.current = 0;
+  };
+
+  const handleInsertDemoMidiClip = () => {
+    const beatPx = zoom;
+    const demoClip = {
+      id: Date.now(),
+      name: 'Demo MIDI Synth',
+      start: 0,
+      width: beatPx * 4,
+      clipOffset: 0,
+      audioBuffer: null,
+      notes: [
+        { id: `demo-1-${Date.now()}`, semitone: 0, start: 0, duration: beatPx * 0.9 },
+        { id: `demo-2-${Date.now()}`, semitone: 4, start: beatPx, duration: beatPx * 0.9 },
+        { id: `demo-3-${Date.now()}`, semitone: 7, start: beatPx * 2, duration: beatPx * 0.9 },
+        { id: `demo-4-${Date.now()}`, semitone: 12, start: beatPx * 3, duration: beatPx * 0.9 }
+      ]
+    };
+
+    setTracks((prevTracks) =>
+      prevTracks.map((t) =>
+        t.id === 2 || t.name.toLowerCase().includes('synth')
+          ? { ...t, clips: [...t.clips, demoClip] }
+          : t
+      )
+    );
+    setSelectedClipId(demoClip.id);
+    setActiveBottomTab('piano-roll');
   };
 
   const handleSaveProject = () => {
@@ -508,7 +446,15 @@ export const DawLayout = () => {
 
             if (isOccupied) return t;
 
-            const newClip = { ...target, id: Date.now(), start: newStart };
+            const newClip = {
+              ...target,
+              id: Date.now() + Math.floor(Math.random() * 1000),
+              start: newStart,
+              notes: (target.notes || []).map((n, idx) => ({
+                ...n,
+                id: n.id ? `${n.id}-dup-${idx}` : `note-dup-${Date.now()}-${idx}`
+              }))
+            };
             return { ...t, clips: [...t.clips, newClip] };
           })
         );
@@ -664,7 +610,8 @@ export const DawLayout = () => {
         audioBuffer: clipBuffer,
         start: startPosition,
         width: clipWidth,
-        clipOffset: 0
+        clipOffset: 0,
+        notes: []
       };
 
       setSelectedClipId(newClip.id);
@@ -755,6 +702,7 @@ export const DawLayout = () => {
         <section className="daw-timeline" ref={timelineRef} onClick={(e) => e.stopPropagation()}>
           <div className="timeline-toolbar">
             <button className="btn-add-track" onClick={handleAddTrack}>+ Añadir Pista</button>
+            <button className="btn-add-track" onClick={handleInsertDemoMidiClip}>+ Demo MIDI</button>
             <div className="timeline-shortcuts">
               <span>Zoom H: Ctrl + 🐭</span>
               <span>Zoom V: Alt + 🐭</span>
@@ -801,7 +749,19 @@ export const DawLayout = () => {
                       key={clip.id}
                       className={`timeline-clip ${selectedClipId === clip.id ? 'selected' : ''}`}
                       style={{ left: `${clip.start}px`, width: `${clip.width}px` }}
+                      onMouseDown={(e) => {
+                        if (e.button !== 0) return;
+                        e.stopPropagation();
+                        setSelectedClipId(clip.id);
+                        setDraggingClip({
+                          trackId: track.id,
+                          clipId: clip.id,
+                          startX: e.clientX,
+                          initialStart: clip.start
+                        });
+                      }}
                       onClick={(e) => {
+                        e.stopPropagation();
                         setSelectedClipId(clip.id);
                         const laneEl = e.currentTarget.closest('.track-lane');
                         if (laneEl && timelineRef.current) {
@@ -852,7 +812,7 @@ export const DawLayout = () => {
             onClick={() => setActiveBottomTab('piano-roll')}
             style={{ padding: '6px 14px', background: activeBottomTab === 'piano-roll' ? 'var(--accent-purple)' : 'transparent', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}
           >
-            Rollo de piano
+            Rollo de piano {selectedClipEntry ? `· ${selectedClipEntry.clip.name}` : ''}
           </button>
           <button
             className={activeBottomTab === 'mixer' ? 'active' : ''}
@@ -873,6 +833,8 @@ export const DawLayout = () => {
               bpm={bpm}
               playheadPosition={playheadPosition}
               zoom={zoom}
+              notes={selectedClipEntry ? selectedClipEntry.clip.notes || [] : []}
+              onChangeNotes={handleUpdateSelectedClipNotes}
               onUpdatePlayhead={(newPos) => {
                 setPlayheadPosition(newPos);
                 playStartPositionRef.current = newPos;
@@ -889,6 +851,7 @@ export const DawLayout = () => {
                         notes: midiClip.notes,
                         audioBuffer: null
                       };
+                      setSelectedClipId(newClip.id);
                       return { ...t, clips: [...t.clips.filter((c) => c.name !== midiClip.name), newClip] };
                     }
                     return t;
