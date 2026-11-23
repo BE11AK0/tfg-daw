@@ -1,157 +1,128 @@
-import React, { useState, useEffect, useRef } from 'react';
-import './DrumRack.css';
+import React, { useState } from 'react';
+import { dawEngine } from '../audio/dawEngine';
 
-const KEY_MAPPINGS = ['1', '2', '3', '4', 'q', 'w', 'e', 'r', 'a', 's', 'd', 'f', 'z', 'x', 'c', 'v'];
+const PADS = [
+  { id: 'kick', label: 'Kick', keyHint: '1' },
+  { id: 'snare', label: 'Snare', keyHint: '2' },
+  { id: 'closedhat', label: 'Closed Hat', keyHint: '3' },
+  { id: 'openhat', label: 'Open Hat', keyHint: '4' },
+  { id: 'clap', label: 'Clap', keyHint: '5' },
+  { id: 'tom', label: 'Low Tom', keyHint: '6' },
+  { id: 'perc', label: 'Rim / Perc', keyHint: '7' },
+  { id: 'sub', label: 'Sub Hit', keyHint: '8' }
+];
 
-export const DrumRack = ({ audioFiles = [], getAudioContext }) => {
-  // Estado para los 16 pads
-  const [pads, setPads] = useState(() =>
-    Array.from({ length: 16 }, (_, i) => ({
-      id: i + 1,
-      name: `Pad ${i + 1}`,
-      fileHandle: null,
-      audioBuffer: null,
-      keyTrigger: KEY_MAPPINGS[i]
-    }))
-  );
+export const DrumRack = ({ onSendDrumPattern, zoom = 50 }) => {
+  const [activePadId, setActivePadId] = useState(null);
 
-  const [selectedPadId, setSelectedPadId] = useState(1);
-  const padsRef = useRef(pads);
-  padsRef.current = pads;
-
-  // Cargar y decodificar el Buffer de Audio al asignar un archivo a un Pad
-  const assignSampleToPad = async (padId, fileHandle) => {
-    if (!fileHandle) return;
-
-    try {
-      const ctx = getAudioContext();
-      const file = await fileHandle.getFile();
-      const arrayBuffer = await file.arrayBuffer();
-      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-
-      setPads((prevPads) =>
-        prevPads.map((pad) =>
-          pad.id === padId
-            ? { ...pad, name: fileHandle.name, fileHandle, audioBuffer }
-            : pad
-        )
-      );
-    } catch (err) {
-      console.error('Error decodificando audio para el pad:', err);
-    }
+  const triggerPad = async (pad) => {
+    setActivePadId(pad.id);
+    await dawEngine.previewDrumPad(pad.id);
+    setTimeout(() => {
+      setActivePadId((prev) => (prev === pad.id ? null : prev));
+    }, 140);
   };
 
-  // Disparar el sonido del Pad con Web Audio API
-  const triggerPad = (pad) => {
-    // Feedback visual en la interfaz
-    const el = document.getElementById(`pad-${pad.id}`);
-    if (el) {
-      el.classList.add('active');
-      setTimeout(() => el.classList.remove('active'), 120);
-    }
+  const handleSendBeatLoop = () => {
+    if (typeof onSendDrumPattern !== 'function') return;
+    const beatPx = zoom;
+    const stepPx = beatPx / 2;
+    const notes = [
+      { id: `d-k1-${Date.now()}`, semitone: -24, start: 0, duration: stepPx },
+      { id: `d-s1-${Date.now()}`, semitone: -12, start: beatPx, duration: stepPx },
+      { id: `d-k2-${Date.now()}`, semitone: -24, start: beatPx * 2, duration: stepPx },
+      { id: `d-s2-${Date.now()}`, semitone: -12, start: beatPx * 3, duration: stepPx },
+      { id: `d-h1-${Date.now()}`, semitone: 0, start: 0, duration: stepPx / 2 },
+      { id: `d-h2-${Date.now()}`, semitone: 0, start: stepPx, duration: stepPx / 2 },
+      { id: `d-h3-${Date.now()}`, semitone: 0, start: beatPx, duration: stepPx / 2 },
+      { id: `d-h4-${Date.now()}`, semitone: 0, start: beatPx + stepPx, duration: stepPx / 2 },
+      { id: `d-h5-${Date.now()}`, semitone: 0, start: beatPx * 2, duration: stepPx / 2 },
+      { id: `d-h6-${Date.now()}`, semitone: 0, start: beatPx * 2 + stepPx, duration: stepPx / 2 },
+      { id: `d-h7-${Date.now()}`, semitone: 0, start: beatPx * 3, duration: stepPx / 2 },
+      { id: `d-h8-${Date.now()}`, semitone: 0, start: beatPx * 3 + stepPx, duration: stepPx / 2 }
+    ];
 
-    if (!pad.audioBuffer) return;
-
-    try {
-      const ctx = getAudioContext();
-      const source = ctx.createBufferSource();
-      source.buffer = pad.audioBuffer;
-      source.connect(ctx.destination);
-      source.start(0);
-    } catch (err) {
-      console.error('Error al reproducir el pad:', err);
-    }
+    onSendDrumPattern({
+      name: 'Drum Rack Groove',
+      start: 0,
+      width: beatPx * 4,
+      notes
+    });
   };
-
-  // Escuchador de teclado para disparar los Pads con teclas físicas (1..4, Q..R, A..F, Z..V)
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.repeat || e.target.tagName === 'INPUT') return;
-
-      const key = e.key.toLowerCase();
-      const targetPad = padsRef.current.find((p) => p.keyTrigger === key);
-
-      if (targetPad) {
-        triggerPad(targetPad);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  const currentSelectedPad = pads.find((p) => p.id === selectedPadId);
 
   return (
-    <div className="drum-rack-container">
-      {/* CUADRÍCULA DE PADS 4x4 */}
-      <div className="pads-grid">
-        {pads.map((pad) => (
+    <div
+      style={{
+        height: '100%',
+        padding: '8px 12px',
+        background: '#120b1d',
+        color: '#f5eaff',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        boxSizing: 'border-box'
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+        <span style={{ color: '#e9d5ff', fontWeight: 'bold' }}>
+          Drum Rack Sintetizado (sin carpeta de audio)
+        </span>
+        {onSendDrumPattern && (
           <button
-            key={pad.id}
-            id={`pad-${pad.id}`}
-            className={`drum-pad ${selectedPadId === pad.id ? 'selected' : ''} ${pad.audioBuffer ? 'has-sample' : ''}`}
-            onClick={() => {
-              setSelectedPadId(pad.id);
-              triggerPad(pad);
+            type="button"
+            onClick={handleSendBeatLoop}
+            style={{
+              background: '#7c3aed',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '4px',
+              padding: '3px 10px',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              fontSize: '11px'
             }}
           >
-            <span className="pad-number">{pad.id}</span>
-            <span className="pad-label">{pad.name}</span>
-            <span className="key-hint">[{pad.keyTrigger.toUpperCase()}]</span>
+            Enviar Groove a Pista 1
           </button>
-        ))}
+        )}
       </div>
 
-      {/* PANEL LATERAL DE CONTROL DE PAD */}
-      <div className="pad-inspector">
-        <h4>Ajustes de Pad {selectedPadId}</h4>
-        
-        <div className="inspector-field">
-          <label>Muestra asignada:</label>
-          <span className="sample-name">
-            {currentSelectedPad?.fileHandle ? currentSelectedPad.fileHandle.name : 'Ninguna seleccionada'}
-          </span>
-        </div>
-
-        <div className="inspector-field">
-          <label>Asignar desde Biblioteca:</label>
-          <select
-            className="sample-select"
-            value=""
-            onChange={(e) => {
-              const fileIndex = e.target.value;
-              if (fileIndex !== '') {
-                assignSampleToPad(selectedPadId, audioFiles[fileIndex]);
-              }
-            }}
-          >
-            <option value="">-- Selecciona una muestra --</option>
-            {audioFiles.map((file, idx) => (
-              <option key={idx} value={idx}>
-                {file.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="inspector-controls">
-          <button 
-            className="btn-secondary" 
-            onClick={() => {
-              setPads((prev) =>
-                prev.map((p) =>
-                  p.id === selectedPadId
-                    ? { ...p, name: `Pad ${p.id}`, fileHandle: null, audioBuffer: null }
-                    : p
-                )
-              );
-            }}
-          >
-            Limpiar Pad
-          </button>
-        </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, minmax(110px, 1fr))',
+          gap: '8px',
+          flex: 1
+        }}
+      >
+        {PADS.map((pad) => {
+          const isActive = activePadId === pad.id;
+          return (
+            <button
+              key={pad.id}
+              type="button"
+              onMouseDown={() => triggerPad(pad)}
+              style={{
+                background: isActive ? '#9333ea' : '#1e1330',
+                border: isActive ? '1px solid #f3e8ff' : '1px solid rgba(168, 85, 247, 0.35)',
+                borderRadius: '6px',
+                color: '#faf5ff',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '2px',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                fontSize: '12px'
+              }}
+            >
+              <span>{pad.label}</span>
+              <span style={{ fontSize: '10px', color: '#d8b4fe' }}>Pad {pad.keyHint}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
-};  
+};

@@ -5,6 +5,21 @@ import { PianoRoll } from './PianoRoll';
 import { Mixer } from './Mixer';
 import { dawEngine } from '../audio/dawEngine';
 
+const AUDIO_EXT_REGEX = /\.(wav|mp3|ogg|flac|m4a)$/i;
+
+function isTauriRuntime() {
+  if (typeof window === 'undefined') return false;
+  return Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+}
+
+function createFileHandleAdapter(file) {
+  return {
+    name: file.name,
+    kind: 'file',
+    getFile: async () => file
+  };
+}
+
 const AudioWaveform = ({ audioBuffer, color = '#c084fc', originalWidth, clipWidth, clipOffset = 0, height = 40 }) => {
   const canvasRef = useRef(null);
 
@@ -54,12 +69,24 @@ export const DawLayout = () => {
   const [folderName, setFolderName] = useState('');
   const [activeSample, setActiveSample] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [runtimeMode] = useState(() => (isTauriRuntime() ? 'Tauri Desktop' : 'Web'));
 
   const [zoom, setZoom] = useState(50);
   const [trackHeight, setTrackHeight] = useState(64);
   const [selectedClipId, setSelectedClipId] = useState(null);
   const [activeBottomTab, setActiveBottomTab] = useState('drum-rack');
   const [draggingClip, setDraggingClip] = useState(null);
+  const [resizingClip, setResizingClip] = useState(null);
+
+  // Tamaños ajustables de cajones (como en un DAW)
+  const [sidebarWidth, setSidebarWidth] = useState(260);
+  const [bottomPanelHeight, setBottomPanelHeight] = useState(260);
+  const [trackHeaderWidth, setTrackHeaderWidth] = useState(170);
+  const [resizingPane, setResizingPane] = useState(null);
+
+  const [loopEnabled, setLoopEnabled] = useState(false);
+  const [loopStartBeats, setLoopStartBeats] = useState(0);
+  const [loopEndBeats, setLoopEndBeats] = useState(8);
 
   const [tracks, setTracks] = useState([
     { id: 1, name: 'Pista 1: Drums', color: 'var(--track-color-1)', volume: 0.8, pan: 0, eqLow: 0, eqMid: 0, eqHigh: 0, delayTime: 0, muted: false, solo: false, clips: [] },
@@ -73,7 +100,9 @@ export const DawLayout = () => {
 
   const audioCtxRef = useRef(null);
   const timelineRef = useRef(null);
+  const folderInputRef = useRef(null);
   const animationFrameRef = useRef(null);
+  const paneRafRef = useRef(null);
   const activeSourcesRef = useRef([]);
   const metronomeTimerRef = useRef(null);
   const analysersRef = useRef(dawEngine.getAnalysersRef());
@@ -93,6 +122,15 @@ export const DawLayout = () => {
 
   const bpmRef = useRef(bpm);
   bpmRef.current = bpm;
+
+  const loopEnabledRef = useRef(loopEnabled);
+  loopEnabledRef.current = loopEnabled;
+
+  const loopStartBeatsRef = useRef(loopStartBeats);
+  loopStartBeatsRef.current = loopStartBeats;
+
+  const loopEndBeatsRef = useRef(loopEndBeats);
+  loopEndBeatsRef.current = loopEndBeats;
 
   const selectedClipEntry = useMemo(() => {
     for (const track of tracks) {
@@ -118,6 +156,50 @@ export const DawLayout = () => {
       })
     );
   };
+
+  useEffect(() => {
+    if (!resizingPane) return;
+
+    const prevSelect = document.body.style.userSelect;
+    const prevCursor = document.body.style.cursor;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = resizingPane.type === 'bottom' ? 'row-resize' : 'col-resize';
+
+    const handleMouseMove = (e) => {
+      if (paneRafRef.current) cancelAnimationFrame(paneRafRef.current);
+
+      paneRafRef.current = requestAnimationFrame(() => {
+        if (resizingPane.type === 'sidebar') {
+          const dx = e.clientX - resizingPane.startX;
+          const nextW = Math.min(480, Math.max(185, resizingPane.startValue + dx));
+          setSidebarWidth(nextW);
+        } else if (resizingPane.type === 'bottom') {
+          const dy = resizingPane.startY - e.clientY;
+          const nextH = Math.min(480, Math.max(150, resizingPane.startValue + dy));
+          setBottomPanelHeight(nextH);
+        } else if (resizingPane.type === 'trackHeader') {
+          const dx = e.clientX - resizingPane.startX;
+          const nextTH = Math.min(300, Math.max(130, resizingPane.startValue + dx));
+          setTrackHeaderWidth(nextTH);
+        }
+      });
+    };
+
+    const handleMouseUp = () => {
+      if (paneRafRef.current) cancelAnimationFrame(paneRafRef.current);
+      setResizingPane(null);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      if (paneRafRef.current) cancelAnimationFrame(paneRafRef.current);
+      document.body.style.userSelect = prevSelect;
+      document.body.style.cursor = prevCursor;
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [resizingPane]);
 
   useEffect(() => {
     const timelineEl = timelineRef.current;
@@ -172,6 +254,40 @@ export const DawLayout = () => {
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [draggingClip, zoom]);
+
+  useEffect(() => {
+    if (!resizingClip) return;
+
+    const handleMouseMove = (e) => {
+      const deltaX = e.clientX - resizingClip.startX;
+      const snapStep = Math.max(1, zoom / 2);
+      const minWidth = Math.max(12, zoom / 4);
+      const nextWidth = Math.max(minWidth, Math.round((resizingClip.initialWidth + deltaX) / snapStep) * snapStep);
+
+      setTracks((prevTracks) =>
+        prevTracks.map((t) => {
+          if (t.id !== resizingClip.trackId) return t;
+          return {
+            ...t,
+            clips: t.clips.map((c) =>
+              c.id === resizingClip.clipId ? { ...c, width: nextWidth } : c
+            )
+          };
+        })
+      );
+    };
+
+    const handleMouseUp = () => {
+      setResizingClip(null);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [resizingClip, zoom]);
 
   const getAudioContext = () => {
     if (!audioCtxRef.current) {
@@ -258,13 +374,23 @@ export const DawLayout = () => {
       playStartPositionRef.current = playheadPosition;
 
       const pxPerSec = zoom * (bpm / 60);
-      const startTime = startAudioPlayback(ctx, playheadPosition);
+      let currentStartTime = startAudioPlayback(ctx, playheadPosition);
 
       const updatePlayhead = () => {
         if (!isPlayingRef.current) return;
 
-        const elapsed = ctx.currentTime - startTime;
+        const elapsed = ctx.currentTime - currentStartTime;
         const currentPx = elapsed * pxPerSec;
+
+        const loopStartPx = Math.max(0, loopStartBeatsRef.current) * zoom;
+        const loopEndPx = Math.max(loopStartBeatsRef.current + 1, loopEndBeatsRef.current) * zoom;
+
+        if (loopEnabledRef.current && currentPx >= loopEndPx) {
+          setPlayheadPosition(loopStartPx);
+          currentStartTime = startAudioPlayback(ctx, loopStartPx);
+          animationFrameRef.current = requestAnimationFrame(updatePlayhead);
+          return;
+        }
 
         let maxTimelineEnd = 3000;
         tracksRef.current.forEach((t) => {
@@ -274,7 +400,7 @@ export const DawLayout = () => {
           });
         });
 
-        if (currentPx >= maxTimelineEnd) {
+        if (!loopEnabledRef.current && currentPx >= maxTimelineEnd) {
           stopPlayback();
           setPlayheadPosition(playStartPositionRef.current);
           return;
@@ -323,9 +449,51 @@ export const DawLayout = () => {
     setActiveBottomTab('piano-roll');
   };
 
+  const handleSendDrumPattern = (drumClip) => {
+    const newClip = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      name: drumClip.name || 'Drum Rack Groove',
+      start: drumClip.start ?? 0,
+      width: drumClip.width ?? zoom * 4,
+      clipOffset: 0,
+      audioBuffer: null,
+      notes: drumClip.notes || []
+    };
+
+    setTracks((prevTracks) =>
+      prevTracks.map((t, idx) =>
+        t.id === 1 || idx === 0
+          ? { ...t, clips: [...t.clips, newClip] }
+          : t
+      )
+    );
+    setSelectedClipId(newClip.id);
+  };
+
+  const triggerBlobDownload = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.href = url;
+    downloadAnchor.download = filename;
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1200);
+  };
+
   const handleSaveProject = () => {
     const projectData = {
+      app: 'Bellaudio',
+      runtime: runtimeMode,
       bpm,
+      loopEnabled,
+      loopStartBeats,
+      loopEndBeats,
+      layoutSizes: {
+        sidebarWidth,
+        bottomPanelHeight,
+        trackHeaderWidth
+      },
       tracks: tracks.map((t) => ({
         id: t.id,
         name: t.name,
@@ -347,13 +515,11 @@ export const DawLayout = () => {
         }))
       }))
     };
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(projectData, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', 'tfg_daw_proyecto.json');
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
+
+    const jsonBlob = new Blob([JSON.stringify(projectData, null, 2)], {
+      type: 'application/json;charset=utf-8'
+    });
+    triggerBlobDownload(jsonBlob, 'tfg_daw_proyecto.json');
   };
 
   const handleLoadProject = (e) => {
@@ -364,6 +530,14 @@ export const DawLayout = () => {
         try {
           const parsed = JSON.parse(event.target.result);
           if (parsed.bpm) setBpm(parsed.bpm);
+          if (typeof parsed.loopEnabled === 'boolean') setLoopEnabled(parsed.loopEnabled);
+          if (typeof parsed.loopStartBeats === 'number') setLoopStartBeats(parsed.loopStartBeats);
+          if (typeof parsed.loopEndBeats === 'number') setLoopEndBeats(parsed.loopEndBeats);
+          if (parsed.layoutSizes) {
+            if (parsed.layoutSizes.sidebarWidth) setSidebarWidth(parsed.layoutSizes.sidebarWidth);
+            if (parsed.layoutSizes.bottomPanelHeight) setBottomPanelHeight(parsed.layoutSizes.bottomPanelHeight);
+            if (parsed.layoutSizes.trackHeaderWidth) setTrackHeaderWidth(parsed.layoutSizes.trackHeaderWidth);
+          }
           if (parsed.tracks) setTracks(parsed.tracks);
           alert('¡Proyecto cargado con éxito! 📂✨');
         } catch (err) {
@@ -374,38 +548,12 @@ export const DawLayout = () => {
   };
 
   const handleExportWav = async () => {
-    alert('Preparando renderizado offline de audio (Bounce)...');
     try {
-      let maxDuration = 5;
-      tracks.forEach((t) => {
-        t.clips.forEach((c) => {
-          const endSec = (c.start + c.width) / (zoom * (bpm / 60));
-          if (endSec > maxDuration) maxDuration = endSec;
-        });
-      });
-
-      const offlineCtx = new OfflineAudioContext(2, 44100 * maxDuration, 44100);
-      const pxPerSec = zoom * (bpm / 60);
-
-      tracks.forEach((track) => {
-        if (track.muted) return;
-        track.clips.forEach((clip) => {
-          if (clip.audioBuffer) {
-            const source = offlineCtx.createBufferSource();
-            source.buffer = clip.audioBuffer;
-            const gain = offlineCtx.createGain();
-            gain.gain.value = track.volume;
-            source.connect(gain);
-            gain.connect(offlineCtx.destination);
-            source.start(clip.start / pxPerSec);
-          }
-        });
-      });
-
-      await offlineCtx.startRendering();
-      alert('¡Audio renderizado con éxito!');
+      const wavBlob = await dawEngine.renderMixToWavBlob(tracks, zoom, bpm);
+      triggerBlobDownload(wavBlob, 'bellaudio_mix.wav');
     } catch (err) {
       console.error(err);
+      alert('Error al exportar el archivo WAV.');
     }
   };
 
@@ -477,11 +625,17 @@ export const DawLayout = () => {
 
   const loadFolderContents = async (dirHandle) => {
     try {
+      if (Array.isArray(dirHandle?.items)) {
+        setFolderItems(dirHandle.items);
+        setCurrentFolderHandle(dirHandle);
+        return;
+      }
+
       const items = [];
       for await (const entry of dirHandle.values()) {
         if (entry.kind === 'directory') {
           items.push({ name: entry.name, kind: 'directory', handle: entry });
-        } else if (entry.kind === 'file' && /\.(wav|mp3|ogg|flac|m4a)$/i.test(entry.name)) {
+        } else if (entry.kind === 'file' && AUDIO_EXT_REGEX.test(entry.name)) {
           items.push({ name: entry.name, kind: 'file', handle: entry });
         }
       }
@@ -493,19 +647,49 @@ export const DawLayout = () => {
     }
   };
 
+  const handleFallbackFolderInputChange = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    const firstRel = files[0].webkitRelativePath || '';
+    const detectedName = firstRel.includes('/') ? firstRel.split('/')[0] : 'Carpeta Audio';
+
+    const audioItems = files
+      .filter((f) => AUDIO_EXT_REGEX.test(f.name))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((f) => ({
+        name: f.name,
+        kind: 'file',
+        handle: createFileHandleAdapter(f)
+      }));
+
+    const virtualFolder = { name: detectedName, items: audioItems };
+    setRootHandle(virtualFolder);
+    setFolderName(detectedName);
+    setFolderHistory([virtualFolder]);
+    await loadFolderContents(virtualFolder);
+    e.target.value = '';
+  };
+
   const handleSelectFolder = async () => {
     try {
-      if (!window.showDirectoryPicker) {
-        alert('Navegador no soportado. Usa Chrome o Edge.');
+      if (!isTauriRuntime() && typeof window.showDirectoryPicker === 'function') {
+        const dirHandle = await window.showDirectoryPicker();
+        setRootHandle(dirHandle);
+        setFolderName(dirHandle.name);
+        setFolderHistory([dirHandle]);
+        await loadFolderContents(dirHandle);
         return;
       }
-      const dirHandle = await window.showDirectoryPicker();
-      setRootHandle(dirHandle);
-      setFolderName(dirHandle.name);
-      setFolderHistory([dirHandle]);
-      await loadFolderContents(dirHandle);
+
+      if (folderInputRef.current) {
+        folderInputRef.current.click();
+      }
     } catch (err) {
-      if (err.name !== 'AbortError') console.error('Error:', err);
+      if (err.name !== 'AbortError') {
+        console.error('Error al seleccionar carpeta, usando selector de archivos:', err);
+        if (folderInputRef.current) folderInputRef.current.click();
+      }
     }
   };
 
@@ -624,12 +808,54 @@ export const DawLayout = () => {
 
   return (
     <div className="daw-container" onClick={() => setSelectedClipId(null)}>
+      <input
+        ref={folderInputRef}
+        type="file"
+        webkitdirectory="true"
+        directory=""
+        multiple
+        onChange={handleFallbackFolderInputChange}
+        style={{ display: 'none' }}
+      />
+
       <header className="daw-header">
         <div className="transport-controls">
           <button className={`btn-transport ${isPlaying ? 'active-play' : ''}`} onClick={handlePlay}>
             {isPlaying ? 'PAUSE' : 'PLAY'}
           </button>
           <button className="btn-transport" onClick={handleStop}>STOP</button>
+
+          <button
+            className={`btn-transport ${loopEnabled ? 'active-play' : ''}`}
+            onClick={() => setLoopEnabled(!loopEnabled)}
+            style={{ fontSize: '11px', background: loopEnabled ? '#7e22ce' : '#27272a' }}
+          >
+            🔁 Loop {loopEnabled ? 'ON' : 'OFF'}
+          </button>
+
+          <label style={{ fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            Ini:
+            <input
+              type="number"
+              min={0}
+              max={loopEndBeats - 1}
+              value={loopStartBeats}
+              onChange={(e) => setLoopStartBeats(Math.max(0, Number(e.target.value) || 0))}
+              style={{ width: '44px' }}
+            />
+          </label>
+
+          <label style={{ fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            Fin:
+            <input
+              type="number"
+              min={loopStartBeats + 1}
+              max={64}
+              value={loopEndBeats}
+              onChange={(e) => setLoopEndBeats(Math.max(loopStartBeats + 1, Number(e.target.value) || 8))}
+              style={{ width: '44px' }}
+            />
+          </label>
 
           <button
             className={`btn-transport ${metronomeActive ? 'active-play' : ''}`}
@@ -656,15 +882,27 @@ export const DawLayout = () => {
         </div>
 
         <div className="presence-badge">
-          <span>🟢 2 usuarios conectados</span>
+          <span>🟢 {runtimeMode} · 2 usuarios conectados</span>
         </div>
       </header>
 
-      <main className="daw-body">
-        <aside className="daw-sidebar" onClick={(e) => e.stopPropagation()}>
+      <main className="daw-body" style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <aside
+          className="daw-sidebar"
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            width: `${sidebarWidth}px`,
+            minWidth: `${sidebarWidth}px`,
+            maxWidth: `${sidebarWidth}px`,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            transition: resizingPane?.type === 'sidebar' ? 'none' : 'box-shadow 140ms ease'
+          }}
+        >
           <h3>Biblioteca Local</h3>
           <button className="btn-select-folder" onClick={handleSelectFolder}>
-            📂 {folderName ? folderName : 'Seleccionar Pendrive (50GB)'}
+            📂 {folderName ? folderName : 'Seleccionar Carpeta / Pendrive'}
           </button>
 
           {currentFolderHandle && (
@@ -677,7 +915,7 @@ export const DawLayout = () => {
             </div>
           )}
 
-          <div className="file-list-container">
+          <div className="file-list-container" style={{ flex: 1, overflowY: 'auto' }}>
             <ul className="file-list">
               {displayedItems.length > 0 ? (
                 displayedItems.map((item, index) => (
@@ -699,7 +937,33 @@ export const DawLayout = () => {
           </div>
         </aside>
 
-        <section className="daw-timeline" ref={timelineRef} onClick={(e) => e.stopPropagation()}>
+        <div
+          onMouseDown={(e) => {
+            if (e.button !== 0) return;
+            e.stopPropagation();
+            setResizingPane({
+              type: 'sidebar',
+              startX: e.clientX,
+              startValue: sidebarWidth
+            });
+          }}
+          title="Arrastra para redimensionar Biblioteca"
+          style={{
+            width: '5px',
+            cursor: 'col-resize',
+            background: resizingPane?.type === 'sidebar' ? '#c084fc' : 'rgba(168, 85, 247, 0.22)',
+            transition: 'background 140ms ease',
+            flexShrink: 0,
+            zIndex: 25
+          }}
+        />
+
+        <section
+          className="daw-timeline"
+          ref={timelineRef}
+          onClick={(e) => e.stopPropagation()}
+          style={{ flex: 1, minWidth: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}
+        >
           <div className="timeline-toolbar">
             <button className="btn-add-track" onClick={handleAddTrack}>+ Añadir Pista</button>
             <button className="btn-add-track" onClick={handleInsertDemoMidiClip}>+ Demo MIDI</button>
@@ -714,7 +978,15 @@ export const DawLayout = () => {
           <div className="timeline-grid" style={{ gridAutoRows: `${trackHeight}px` }}>
             {tracks.map((track) => (
               <React.Fragment key={track.id}>
-                <div className="track-header" style={{ borderLeftColor: track.color, width: '160px', minWidth: '160px' }}>
+                <div
+                  className="track-header"
+                  style={{
+                    borderLeftColor: track.color,
+                    width: `${trackHeaderWidth}px`,
+                    minWidth: `${trackHeaderWidth}px`,
+                    position: 'relative'
+                  }}
+                >
                   <div className="track-header-top">
                     <input type="text" value={track.name} onChange={(e) => updateTrack(track.id, { name: e.target.value })} className="track-name-input-custom" />
                     <div className="track-inline-buttons">
@@ -729,6 +1001,28 @@ export const DawLayout = () => {
                       <button onClick={() => deleteTrack(track.id)}>✕</button>
                     </div>
                   </div>
+
+                  <div
+                    onMouseDown={(e) => {
+                      if (e.button !== 0) return;
+                      e.stopPropagation();
+                      setResizingPane({
+                        type: 'trackHeader',
+                        startX: e.clientX,
+                        startValue: trackHeaderWidth
+                      });
+                    }}
+                    title="Arrastra para ajustar ancho de pistas"
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      right: 0,
+                      width: '4px',
+                      height: '100%',
+                      cursor: 'col-resize',
+                      background: resizingPane?.type === 'trackHeader' ? '#c084fc' : 'transparent'
+                    }}
+                  />
                 </div>
 
                 <div
@@ -748,7 +1042,11 @@ export const DawLayout = () => {
                     <div
                       key={clip.id}
                       className={`timeline-clip ${selectedClipId === clip.id ? 'selected' : ''}`}
-                      style={{ left: `${clip.start}px`, width: `${clip.width}px` }}
+                      style={{
+                        left: `${clip.start}px`,
+                        width: `${clip.width}px`,
+                        transition: draggingClip?.clipId === clip.id || resizingClip?.clipId === clip.id ? 'none' : 'box-shadow 120ms ease, border-color 120ms ease'
+                      }}
                       onMouseDown={(e) => {
                         if (e.button !== 0) return;
                         e.stopPropagation();
@@ -789,6 +1087,28 @@ export const DawLayout = () => {
                       <div className="clip-header-bar">
                         <span className="clip-title">{clip.name}</span>
                       </div>
+                      <div
+                        onMouseDown={(e) => {
+                          if (e.button !== 0) return;
+                          e.stopPropagation();
+                          setSelectedClipId(clip.id);
+                          setResizingClip({
+                            trackId: track.id,
+                            clipId: clip.id,
+                            startX: e.clientX,
+                            initialWidth: clip.width
+                          });
+                        }}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          right: 0,
+                          width: '8px',
+                          height: '100%',
+                          cursor: 'ew-resize',
+                          background: 'rgba(233, 213, 255, 0.22)'
+                        }}
+                      />
                     </div>
                   ))}
                 </div>
@@ -798,33 +1118,73 @@ export const DawLayout = () => {
         </section>
       </main>
 
-      <footer className="daw-bottom-panel" onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', height: '260px', background: 'var(--bg-panel)', borderTop: '1px solid var(--border-color)', boxSizing: 'border-box' }}>
+      <div
+        onMouseDown={(e) => {
+          if (e.button !== 0) return;
+          e.stopPropagation();
+          setResizingPane({
+            type: 'bottom',
+            startY: e.clientY,
+            startValue: bottomPanelHeight
+          });
+        }}
+        title="Arrastra para ajustar altura del panel inferior"
+        style={{
+          height: '5px',
+          cursor: 'row-resize',
+          background: resizingPane?.type === 'bottom' ? '#c084fc' : 'rgba(168, 85, 247, 0.25)',
+          transition: 'background 140ms ease',
+          flexShrink: 0,
+          zIndex: 25
+        }}
+      />
+
+      <footer
+        className="daw-bottom-panel"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: `${bottomPanelHeight}px`,
+          minHeight: `${bottomPanelHeight}px`,
+          background: 'var(--bg-panel)',
+          boxSizing: 'border-box',
+          overflow: 'hidden'
+        }}
+      >
         <div className="panel-tabs" style={{ display: 'flex', gap: '4px', padding: '6px 12px', background: 'var(--bg-panel)', borderBottom: '1px solid var(--border-color)', flexShrink: 0 }}>
           <button
             className={activeBottomTab === 'drum-rack' ? 'active' : ''}
             onClick={() => setActiveBottomTab('drum-rack')}
-            style={{ padding: '6px 14px', background: activeBottomTab === 'drum-rack' ? 'var(--accent-purple)' : 'transparent', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}
+            style={{ padding: '6px 14px', background: activeBottomTab === 'drum-rack' ? 'var(--accent-purple)' : 'transparent', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', transition: 'background 140ms ease' }}
           >
             Drum Rack (Pads)
           </button>
           <button
             className={activeBottomTab === 'piano-roll' ? 'active' : ''}
             onClick={() => setActiveBottomTab('piano-roll')}
-            style={{ padding: '6px 14px', background: activeBottomTab === 'piano-roll' ? 'var(--accent-purple)' : 'transparent', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}
+            style={{ padding: '6px 14px', background: activeBottomTab === 'piano-roll' ? 'var(--accent-purple)' : 'transparent', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', transition: 'background 140ms ease' }}
           >
             Rollo de piano {selectedClipEntry ? `· ${selectedClipEntry.clip.name}` : ''}
           </button>
           <button
             className={activeBottomTab === 'mixer' ? 'active' : ''}
             onClick={() => setActiveBottomTab('mixer')}
-            style={{ padding: '6px 14px', background: activeBottomTab === 'mixer' ? 'var(--accent-purple)' : 'transparent', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}
+            style={{ padding: '6px 14px', background: activeBottomTab === 'mixer' ? 'var(--accent-purple)' : 'transparent', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', transition: 'background 140ms ease' }}
           >
             Mezclador Pro & FX
           </button>
         </div>
 
         <div className="panel-content" style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-          {activeBottomTab === 'drum-rack' && <DrumRack audioFiles={folderItems.filter((i) => i.kind === 'file').map((f) => f.handle)} getAudioContext={getAudioContext} />}
+          {activeBottomTab === 'drum-rack' && (
+            <DrumRack
+              audioFiles={folderItems.filter((i) => i.kind === 'file').map((f) => f.handle)}
+              getAudioContext={getAudioContext}
+              zoom={zoom}
+              onSendDrumPattern={handleSendDrumPattern}
+            />
+          )}
           {activeBottomTab === 'piano-roll' && (
             <PianoRoll
               audioFiles={folderItems.filter((i) => i.kind === 'file').map((f) => f.handle)}

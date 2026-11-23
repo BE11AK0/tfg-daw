@@ -5,6 +5,13 @@ const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 
 const MIN_SEMITONE = -12; // C3
 const MAX_SEMITONE = 24;  // C6
 
+const SCALES = {
+  chromatic: null,
+  c_major: [0, 2, 4, 5, 7, 9, 11],
+  a_minor: [9, 11, 0, 2, 4, 5, 7],
+  f_major: [5, 7, 9, 10, 0, 2, 4]
+};
+
 function semitoneToLabel(semitone) {
   const midi = 60 + semitone;
   const name = NOTE_NAMES[midi % 12];
@@ -17,20 +24,42 @@ function isBlackSemitone(semitone) {
   return [1, 3, 6, 8, 10].includes(midi % 12);
 }
 
+function isInScale(semitone, scaleKey) {
+  const allowed = SCALES[scaleKey];
+  if (!allowed) return true;
+  const pitchClass = ((60 + semitone) % 12 + 12) % 12;
+  return allowed.includes(pitchClass);
+}
+
 export const PianoRoll = ({
   bpm = 120,
   zoom = 50,
   playheadPosition = 0,
+  notes: externalNotes,
+  onChangeNotes,
   onUpdatePlayhead,
   onExportMidiClip,
   totalBeats = 16,
-  stepBeats = 0.25,
   rowHeight = 20
 }) => {
   const gridRef = useRef(null);
-  const [notes, setNotes] = useState([]);
+  const [localNotes, setLocalNotes] = useState([]);
+  const [stepBeats, setStepBeats] = useState(0.25); // 1/16 por defecto
+  const [scaleKey, setScaleKey] = useState('c_major');
   const [selectedNoteId, setSelectedNoteId] = useState(null);
   const [dragState, setDragState] = useState(null);
+
+  const isControlled = Array.isArray(externalNotes) && typeof onChangeNotes === 'function';
+  const notes = isControlled ? externalNotes : localNotes;
+
+  const commitNotes = (updater) => {
+    if (isControlled) {
+      const next = typeof updater === 'function' ? updater(externalNotes) : updater;
+      onChangeNotes(next);
+    } else {
+      setLocalNotes(updater);
+    }
+  };
 
   const pixelsPerBeat = zoom;
   const stepPx = Math.max(4, stepBeats * pixelsPerBeat);
@@ -49,18 +78,44 @@ export const PianoRoll = ({
     return Math.max(0, Math.min(maxPx - stepPx, snapped));
   };
 
+  const handleQuantizeAll = () => {
+    const maxPx = totalBeats * pixelsPerBeat;
+    commitNotes((prev) =>
+      prev.map((n) => {
+        const qStart = snapPx(n.start);
+        const qDur = Math.max(stepPx, Math.min(maxPx - qStart, Math.round(n.duration / stepPx) * stepPx));
+        return { ...n, start: qStart, duration: qDur };
+      })
+    );
+  };
+
+  const handleInsertTriadChord = () => {
+    const chordSemitones = [0, 4, 7];
+    const startPx = snapPx(0);
+    const durPx = Math.max(stepPx, pixelsPerBeat * 2);
+    const created = chordSemitones.map((semi, idx) => ({
+      id: `chord-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+      semitone: semi,
+      start: startPx,
+      duration: durPx
+    }));
+    dawEngine.previewSemitone(0, 0.35);
+    commitNotes((prev) => [...prev, ...created]);
+    if (created[0]) setSelectedNoteId(created[0].id);
+  };
+
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNoteId) {
         e.preventDefault();
-        setNotes((prev) => prev.filter((n) => n.id !== selectedNoteId));
+        commitNotes((prev) => prev.filter((n) => n.id !== selectedNoteId));
         setSelectedNoteId(null);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedNoteId]);
+  }, [selectedNoteId, externalNotes, isControlled]);
 
   useEffect(() => {
     if (!dragState) return;
@@ -78,7 +133,7 @@ export const PianoRoll = ({
           Math.min(MAX_SEMITONE, dragState.initialSemitone - deltaRows)
         );
 
-        setNotes((prev) =>
+        commitNotes((prev) =>
           prev.map((n) =>
             n.id === dragState.noteId
               ? {
@@ -93,7 +148,7 @@ export const PianoRoll = ({
         const rawDur = dragState.initialDuration + dx;
         const snappedDur = Math.max(stepPx, Math.round(rawDur / stepPx) * stepPx);
 
-        setNotes((prev) =>
+        commitNotes((prev) =>
           prev.map((n) =>
             n.id === dragState.noteId
               ? {
@@ -159,7 +214,7 @@ export const PianoRoll = ({
 
     dawEngine.previewSemitone(newNote.semitone, 0.25);
     setSelectedNoteId(newNote.id);
-    setNotes((prev) => [...prev, newNote]);
+    commitNotes((prev) => [...prev, newNote]);
     setDragState({
       mode: 'move',
       noteId: newNote.id,
@@ -173,7 +228,7 @@ export const PianoRoll = ({
   const handleNoteContextMenu = (e, noteId) => {
     e.preventDefault();
     e.stopPropagation();
-    setNotes((prev) => prev.filter((n) => n.id !== noteId));
+    commitNotes((prev) => prev.filter((n) => n.id !== noteId));
     if (selectedNoteId === noteId) setSelectedNoteId(null);
   };
 
@@ -184,7 +239,12 @@ export const PianoRoll = ({
       name: 'Patrón Piano Roll',
       start: 0,
       width: Math.max(pixelsPerBeat * 2, maxEnd),
-      notes: notes.map(({ semitone, start, duration }) => ({ semitone, start, duration }))
+      notes: notes.map(({ id, semitone, start, duration }) => ({
+        id: id || `note-${semitone}-${start}`,
+        semitone,
+        start,
+        duration
+      }))
     });
   };
 
@@ -193,24 +253,71 @@ export const PianoRoll = ({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '4px 10px', borderBottom: '1px solid rgba(168, 85, 247, 0.2)', fontSize: '12px' }}>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '4px 10px', borderBottom: '1px solid rgba(168, 85, 247, 0.2)', fontSize: '12px', flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          Rejilla:
+          <select
+            value={stepBeats}
+            onChange={(e) => setStepBeats(Number(e.target.value))}
+            style={{ background: '#27272a', color: '#f3e8ff', border: '1px solid #7c3aed', borderRadius: '4px', padding: '2px 6px' }}
+          >
+            <option value={1}>1/4 (Beat)</option>
+            <option value={0.5}>1/8 (Corchea)</option>
+            <option value={0.25}>1/16 (Semicorchea)</option>
+          </select>
+        </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          Escala:
+          <select
+            value={scaleKey}
+            onChange={(e) => setScaleKey(e.target.value)}
+            style={{ background: '#27272a', color: '#f3e8ff', border: '1px solid #7c3aed', borderRadius: '4px', padding: '2px 6px' }}
+          >
+            <option value="c_major">Do Mayor</option>
+            <option value="a_minor">La Menor</option>
+            <option value="f_major">Fa Mayor</option>
+            <option value="chromatic">Cromática</option>
+          </select>
+        </label>
+
         <button
           type="button"
-          onClick={handleSendToTrack}
-          style={{ background: '#7c3aed', color: '#fff', border: 'none', borderRadius: '4px', padding: '3px 10px', cursor: 'pointer', fontWeight: 'bold' }}
+          onClick={handleInsertTriadChord}
+          style={{ background: '#27272a', color: '#e9d5ff', border: '1px solid #9333ea', borderRadius: '4px', padding: '3px 10px', cursor: 'pointer' }}
         >
-          Enviar a Pista 2
+          + Acorde C Maj
         </button>
+
+        <button
+          type="button"
+          onClick={handleQuantizeAll}
+          style={{ background: '#27272a', color: '#e9d5ff', border: '1px solid #9333ea', borderRadius: '4px', padding: '3px 10px', cursor: 'pointer' }}
+        >
+          Cuantizar
+        </button>
+
+        {onExportMidiClip && (
+          <button
+            type="button"
+            onClick={handleSendToTrack}
+            style={{ background: '#7c3aed', color: '#fff', border: 'none', borderRadius: '4px', padding: '3px 10px', cursor: 'pointer', fontWeight: 'bold' }}
+          >
+            Enviar a Pista 2
+          </button>
+        )}
+
         <button
           type="button"
           onClick={() => {
-            setNotes([]);
+            commitNotes([]);
             setSelectedNoteId(null);
           }}
           style={{ background: '#27272a', color: '#e9d5ff', border: '1px solid #7c3aed', borderRadius: '4px', padding: '3px 10px', cursor: 'pointer' }}
         >
           Limpiar notas
         </button>
+
         {onUpdatePlayhead && (
           <button
             type="button"
@@ -220,6 +327,7 @@ export const PianoRoll = ({
             Cursor a 0 ({bpm} BPM)
           </button>
         )}
+
         <span style={{ opacity: 0.75 }}>Clic: crear/mover · Borde derecho: alargar · Clic derecho / Supr: borrar</span>
       </div>
 
@@ -227,6 +335,7 @@ export const PianoRoll = ({
         <div className="piano-keys" style={{ width: '64px', flexShrink: 0 }}>
           {semitones.map((semitone) => {
             const black = isBlackSemitone(semitone);
+            const inScale = isInScale(semitone, scaleKey);
             return (
               <button
                 key={semitone}
@@ -241,8 +350,9 @@ export const PianoRoll = ({
                   paddingRight: '6px',
                   fontSize: '11px',
                   border: '1px solid rgba(168, 85, 247, 0.18)',
-                  background: black ? '#1e162b' : '#f3e8ff',
+                  background: black ? '#1e162b' : inScale ? '#f3e8ff' : '#ddd6fe',
                   color: black ? '#e9d5ff' : '#2e1065',
+                  opacity: inScale ? 1 : 0.72,
                   cursor: 'pointer'
                 }}
               >
@@ -269,6 +379,24 @@ export const PianoRoll = ({
             cursor: 'crosshair'
           }}
         >
+          {semitones.map((semitone, idx) => {
+            if (!isInScale(semitone, scaleKey) || scaleKey === 'chromatic') return null;
+            return (
+              <div
+                key={`scale-row-${semitone}`}
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  top: `${idx * rowHeight}px`,
+                  height: `${rowHeight}px`,
+                  background: 'rgba(168, 85, 247, 0.06)',
+                  pointerEvents: 'none'
+                }}
+              />
+            );
+          })}
+
           <div
             style={{
               position: 'absolute',
