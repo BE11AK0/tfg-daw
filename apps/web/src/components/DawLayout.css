@@ -1,3 +1,8 @@
+<<<<<<< HEAD
+.daw-container {
+  display: flex;
+  flex-direction: column;
+=======
 :root {
   --bg-main: #09090b;
   --bg-panel: #121216;
@@ -12,6 +17,7 @@
 body, html {
   margin: 0;
   padding: 0;
+>>>>>>> 3c2bc35a7f5823fad7635cb70eb083bc6c7bf784
   height: 100vh;
   width: 100vw;
   background-color: var(--bg-main);
@@ -37,6 +43,12 @@ body, html {
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
+<<<<<<< HEAD
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--border-color);
+  height: 50px;
+=======
+>>>>>>> 3c2bc35a7f5823fad7635cb70eb083bc6c7bf784
   flex-shrink: 0;
 }
 
@@ -84,6 +96,41 @@ body, html {
 
 .project-title span, .presence-badge span {
   font-size: 0.8rem;
+<<<<<<< HEAD
+  background: rgba(157, 78, 221, 0.15);
+  border: 1px solid var(--accent-purple);
+  color: var(--accent-purple-light);
+  padding: 4px 10px;
+  border-radius: 12px;
+}
+
+/* CUERPO PRINCIPAL */
+.daw-body {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--bg-app);
+}
+
+.daw-sidebar {
+  background-color: var(--bg-panel);
+  border-right: 1px solid var(--border-color);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.daw-sidebar h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+=======
+>>>>>>> 3c2bc35a7f5823fad7635cb70eb083bc6c7bf784
   color: var(--text-secondary);
 }
 
@@ -165,10 +212,24 @@ body, html {
   outline: none;
 }
 
+<<<<<<< HEAD
+.search-input:focus, .folder-select:focus {
+  border-color: var(--accent-purple) !important;
+}
+
+/* LISTA DE ARCHIVOS */
+.file-list-container {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background-color: var(--bg-app);
+=======
 .file-list-container {
   flex: 1;
   overflow-y: auto;
   margin-top: 10px;
+>>>>>>> 3c2bc35a7f5823fad7635cb70eb083bc6c7bf784
 }
 
 .file-list {
@@ -207,6 +268,15 @@ body, html {
   margin-top: 20px;
 }
 
+<<<<<<< HEAD
+/* TIMELINE ABLETON */
+.daw-timeline {
+  background-color: var(--bg-timeline);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+=======
 .daw-timeline {
   flex: 1;
   display: flex;
@@ -215,11 +285,16 @@ body, html {
   overflow-y: auto;
   position: relative;
   background-color: #0d0d10;
+>>>>>>> 3c2bc35a7f5823fad7635cb70eb083bc6c7bf784
 }
 
 .timeline-toolbar {
   height: 36px;
+<<<<<<< HEAD
+  background-color: var(--bg-panel);
+=======
   background: var(--bg-panel);
+>>>>>>> 3c2bc35a7f5823fad7635cb70eb083bc6c7bf784
   border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
@@ -229,6 +304,24 @@ body, html {
 }
 
 .btn-add-track {
+<<<<<<< HEAD
+  background-color: var(--accent-purple) !important;
+  color: #fff !important;
+  border: none !important;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.timeline-shortcuts {
+  display: flex;
+  gap: 12px;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+=======
   background: var(--border-color);
   color: #fff;
   border: none;
@@ -243,16 +336,29 @@ body, html {
   font-size: 0.7rem;
   color: var(--text-secondary);
   margin-left: 12px;
+>>>>>>> 3c2bc35a7f5823fad7635cb70eb083bc6c7bf784
 }
 
 .timeline-grid {
   display: grid;
+<<<<<<< HEAD
+  grid-template-columns: 180px 1fr;
+  flex: 1;
+  overflow: auto;
+=======
   width: 3160px;
+>>>>>>> 3c2bc35a7f5823fad7635cb70eb083bc6c7bf784
 }
 
 .track-header {
   background: var(--bg-panel);
   border-right: 1px solid var(--border-color);
+<<<<<<< HEAD
+  border-left: 4px solid var(--track-color-1);
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+=======
   border-left: 4px solid var(--accent-purple);
   display: flex;
   flex-direction: column;
@@ -265,6 +371,7 @@ body, html {
 }
 
 .track-header-top {
+>>>>>>> 3c2bc35a7f5823fad7635cb70eb083bc6c7bf784
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -325,6 +432,120 @@ body, html {
 
 .track-lane {
   position: relative;
+<<<<<<< HEAD
+  border-bottom: 1px solid var(--border-color);
+  background-image: linear-gradient(to right, #202028 1px, transparent 1px);
+  cursor: pointer;
+  min-width: 3000px;
+}
+
+/* CLIPS ESTILO ABLETON LIVE */
+.timeline-clip {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  background: rgba(123, 44, 191, 0.65);
+  border: 1px solid var(--accent-purple-light);
+  border-radius: 3px;
+  box-sizing: border-box;
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-clip:active {
+  cursor: grabbing;
+}
+
+.timeline-clip.selected {
+  border: 2px solid #00ffff !important;
+  box-shadow: 0 0 12px rgba(0, 255, 255, 0.6);
+  z-index: 10;
+}
+
+.clip-header-bar {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 6px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+}
+
+.clip-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* BORDES DE RECORTE ABLETON */
+.clip-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  z-index: 5;
+}
+
+.clip-handle:hover {
+  background: rgba(0, 255, 255, 0.5);
+}
+
+.handle-left {
+  left: 0;
+}
+
+.handle-right {
+  right: 0;
+}
+
+/* PANEL INFERIOR */
+.daw-bottom-panel {
+  background-color: var(--bg-panel);
+  border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
+  height: 270px;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-tabs {
+  display: flex;
+  background-color: var(--bg-app);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0 8px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.panel-tabs button {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 8px 16px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.panel-tabs button.active {
+  color: var(--accent-purple-light);
+  border-bottom-color: var(--accent-purple);
+  background-color: var(--bg-panel);
+}
+
+.panel-content {
+  padding: 12px;
+  flex: 1;
+  overflow-y: auto;
+}
+=======
   height: 100%;
   border-bottom: 1px solid var(--border-color);
   background-image: linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
@@ -365,3 +586,4 @@ body, html {
   overflow: hidden;
   text-overflow: ellipsis;
 } 
+>>>>>>> 3c2bc35a7f5823fad7635cb70eb083bc6c7bf784

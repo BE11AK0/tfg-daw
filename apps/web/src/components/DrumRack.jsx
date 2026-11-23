@@ -154,4 +154,4 @@ export const DrumRack = ({ audioFiles = [], getAudioContext }) => {
       </div>
     </div>
   );
-};
+};  
